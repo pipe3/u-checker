@@ -165,6 +165,38 @@ def test_check_examinations_ei_nein_wird_uebersprungen(mock_xlrd):
     assert result == []
 
 
+# --- send_notifications Rückgabewert ---
+
+def test_send_notifications_gibt_null_zurueck_bei_leerer_liste():
+    result = send_notifications([], dry_run=True)
+    assert result == 0
+
+
+def test_send_notifications_gibt_anzahl_zurueck(capsys):
+    persons = [
+        Person(
+            pers_nr="001",
+            vorname="Anna",
+            nachname="Müller",
+            email="anna@example.com",
+            pruefungen=[
+                Pruefung(typ="G25", beschreibung="G25-Test", datum=date.today() + timedelta(days=30), status="warnung"),
+            ],
+        ),
+        Person(
+            pers_nr="002",
+            vorname="Karl",
+            nachname="Brand",
+            email="karl@example.com",
+            pruefungen=[
+                Pruefung(typ="G25", beschreibung="G25-Test", datum=date.today() - timedelta(days=5), status="abgelaufen"),
+            ],
+        ),
+    ]
+    result = send_notifications(persons, dry_run=True)
+    assert result == 2
+
+
 @patch("u_checker.checker.xlrd")
 def test_check_examinations_abgelaufene_pruefung(mock_xlrd):
     heute = date.today()

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Untersuchungs-Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    section { margin-bottom: 2rem; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    input[type="file"] { flex: 1; min-width: 0; }
+    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    button:disabled { background: #adb5bd; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    label.dry-run { font-size: 0.85rem; color: #555; display: flex; align-items: center; gap: 0.3rem; }
+    .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
+    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .status-fertig  { color: #155724; font-weight: 600; }
+    .status-fehler  { color: #721c24; font-weight: 600; }
+    .status-laufend { color: #856404; }
+    .dry-run-badge { font-size: 0.75rem; background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px; padding: 0 4px; color: #856404; }
+    .error-msg { color: #721c24; font-size: 0.8rem; }
+    p.empty { color: #888; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>Untersuchungs-Checker</h1>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+
+  <section>
+    <h2>XLS-Datei hochladen</h2>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+      <input type="file" name="xls_datei" accept=".xls" required>
+      <button type="submit">Hochladen</button>
+    </form>
+    {% if xls_vorhanden %}
+    <p class="meta">Aktuelle Datei: <strong>{{ xls_dateiname or "latest.xls" }}</strong></p>
+    {% else %}
+    <p class="meta">Noch keine Datei hochgeladen.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Script ausführen</h2>
+    <form action="/run" method="post">
+      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Script jetzt ausführen</button>
+      <label class="dry-run">
+        <input type="checkbox" name="dry_run" value="1"> Dry-Run (kein E-Mail-Versand)
+      </label>
+    </form>
+    {% if not xls_vorhanden %}
+    <p class="meta">Bitte zuerst eine XLS-Datei hochladen.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Lauf-Historie</h2>
+    {% if runs %}
+    <table>
+      <thead>
+        <tr>
+          <th>Zeitstempel</th>
+          <th>Status</th>
+          <th>Personen</th>
+          <th>E-Mails</th>
+          <th>Datei / Hinweis</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in runs %}
+        <tr>
+          <td>{{ run["gestartet_am"] | replace("T", " ") }}</td>
+          <td class="status-{{ run['status'] }}">
+            {{ run["status"] }}
+            {% if run["dry_run"] %}<span class="dry-run-badge">dry-run</span>{% endif %}
+          </td>
+          <td>{{ run["personen_gefunden"] if run["personen_gefunden"] is not none else "–" }}</td>
+          <td>{{ run["emails_gesendet"] if run["emails_gesendet"] is not none else "–" }}</td>
+          <td>
+            {% if run["fehlermeldung"] %}
+            <span class="error-msg">{{ run["fehlermeldung"] }}</span>
+            {% else %}
+            {{ run["xls_dateiname"] or "–" }}
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Noch keine Läufe.</p>
+    {% endif %}
+  </section>
+</body>
+</html>

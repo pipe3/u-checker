@@ -130,10 +130,10 @@ def send_summary(persons: List[Person], dry_run: bool = False):
         print(f"Zusammenfassung gesendet an {', '.join(msg['to'])}")
 
 
-def send_notifications(persons: List[Person], dry_run: bool = False):
+def send_notifications(persons: List[Person], dry_run: bool = False) -> int:
     if not persons:
         print("Keine Personen mit Handlungsbedarf gefunden.")
-        return
+        return 0
 
     template = _load_template()
 
@@ -152,3 +152,5 @@ def send_notifications(persons: List[Person], dry_run: bool = False):
             _send(msg)
             cc_info = f" (CC: {', '.join(msg['cc'])})" if msg["cc"] else ""
             print(f"Gesendet an {msg['to']}{cc_info}")
+
+    return len(persons)
