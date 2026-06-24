@@ -4,8 +4,12 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 
-WARN_DAYS = int(os.getenv("WARN_DAYS", "90"))
-PRUEFUNGSTYPEN = [t.strip() for t in os.getenv("PRUEFUNGSTYPEN", "G25").split(",")]
+_DEFAULT_WARN_DAYS = int(os.getenv("WARN_DAYS", "90"))
+_DEFAULT_PRUEFUNGSTYPEN = [t.strip() for t in os.getenv("PRUEFUNGSTYPEN", "G25").split(",")]
+
+# Modul-Globals für Legacy-Zugriff (z.B. monkeypatch in Tests)
+WARN_DAYS = _DEFAULT_WARN_DAYS
+PRUEFUNGSTYPEN = _DEFAULT_PRUEFUNGSTYPEN
 
 # Spaltenindizes aus MP-Feuer Export
 COL_TYP = 0          # Kurzbezeich.
@@ -48,7 +52,15 @@ def _xl_to_date(wb: xlrd.Book, val) -> Optional[date]:
     return date(t[0], t[1], t[2])
 
 
-def check_examinations(filepath: str) -> List[Person]:
+def check_examinations(
+    filepath: str,
+    *,
+    warn_days: Optional[int] = None,
+    pruefungstypen: Optional[List[str]] = None,
+) -> List[Person]:
+    effective_warn_days = warn_days if warn_days is not None else WARN_DAYS
+    effective_pruefungstypen = pruefungstypen if pruefungstypen is not None else PRUEFUNGSTYPEN
+
     wb = xlrd.open_workbook(filepath)
     sh = wb.sheets()[0]
     heute = date.today()
@@ -61,7 +73,7 @@ def check_examinations(filepath: str) -> List[Person]:
         typ = str(row[COL_TYP]).strip()
         ok = str(row[COL_OK]).strip()
 
-        if typ not in PRUEFUNGSTYPEN:
+        if typ not in effective_pruefungstypen:
             continue
         if ok == "Ja":
             continue
@@ -92,7 +104,7 @@ def check_examinations(filepath: str) -> List[Person]:
 
         if datum <= heute:
             status = "abgelaufen"
-        elif datum <= heute + timedelta(days=WARN_DAYS):
+        elif datum <= heute + timedelta(days=effective_warn_days):
             status = "warnung"
         else:
             continue

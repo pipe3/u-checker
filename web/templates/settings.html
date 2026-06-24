@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Einstellungen – Untersuchungs-Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    nav { margin-bottom: 1.5rem; font-size: 0.9rem; }
+    nav a { color: #0d6efd; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; color: #444; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    .field { margin-bottom: 0.9rem; }
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; color: #333; }
+    .hint { font-size: 0.78rem; color: #888; margin-top: 0.15rem; }
+    input[type="text"], input[type="number"], input[type="password"], select {
+      width: 100%; padding: 0.4rem 0.6rem; border: 1px solid #ced4da;
+      border-radius: 4px; font-size: 0.9rem; font-family: inherit;
+    }
+    input[type="password"] { font-family: monospace; }
+    button[type="submit"] {
+      margin-top: 1.5rem; padding: 0.5rem 1.4rem;
+      background: #0d6efd; color: #fff; border: none; border-radius: 4px;
+      cursor: pointer; font-size: 0.95rem;
+    }
+    button[type="submit"]:hover { background: #0b5ed7; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.5rem; }
+    @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>Einstellungen</h1>
+  <nav><a href="/">← Zurück zur Übersicht</a></nav>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+
+  <form method="post" action="/settings">
+
+    <h2>SMTP (E-Mail-Versand)</h2>
+    <div class="grid-2">
+      <div class="field">
+        <label for="smtp_host">SMTP-Server</label>
+        <input type="text" id="smtp_host" name="smtp_host" value="{{ cfg.smtp_host }}" placeholder="smtp.example.com">
+      </div>
+      <div class="field">
+        <label for="smtp_port">Port</label>
+        <input type="number" id="smtp_port" name="smtp_port" value="{{ cfg.smtp_port }}" placeholder="587">
+      </div>
+      <div class="field">
+        <label for="smtp_user">Benutzername</label>
+        <input type="text" id="smtp_user" name="smtp_user" value="{{ cfg.smtp_user }}" placeholder="absender@example.com">
+      </div>
+      <div class="field">
+        <label for="smtp_password">Passwort</label>
+        <input type="password" id="smtp_password" name="smtp_password" value="{{ cfg.smtp_password }}">
+      </div>
+    </div>
+    <div class="field">
+      <label for="smtp_from">Absenderadresse</label>
+      <input type="text" id="smtp_from" name="smtp_from" value="{{ cfg.smtp_from }}" placeholder="feuerwehr@example.com">
+    </div>
+
+    <h2>IMAP (Nachweise-Postfach)</h2>
+    <div class="grid-2">
+      <div class="field">
+        <label for="imap_host">IMAP-Server</label>
+        <input type="text" id="imap_host" name="imap_host" value="{{ cfg.imap_host }}" placeholder="imap.example.com">
+      </div>
+      <div class="field">
+        <label for="imap_port">Port</label>
+        <input type="number" id="imap_port" name="imap_port" value="{{ cfg.imap_port }}" placeholder="993">
+      </div>
+      <div class="field">
+        <label for="imap_user">Benutzername</label>
+        <input type="text" id="imap_user" name="imap_user" value="{{ cfg.imap_user }}">
+      </div>
+      <div class="field">
+        <label for="imap_password">Passwort</label>
+        <input type="password" id="imap_password" name="imap_password" value="{{ cfg.imap_password }}">
+      </div>
+    </div>
+
+    <h2>Empfänger</h2>
+    <div class="field">
+      <label for="kommandanten_cc">Kommandanten (CC bei abgelaufenen Prüfungen)</label>
+      <input type="text" id="kommandanten_cc" name="kommandanten_cc" value="{{ cfg.kommandanten_cc }}" placeholder="k1@example.com,k2@example.com">
+      <p class="hint">Kommagetrennte E-Mail-Adressen. Werden in CC gesetzt, wenn mindestens eine Prüfung abgelaufen ist.</p>
+    </div>
+    <div class="field">
+      <label for="zusammenfassung_an">Gesamtübersicht an</label>
+      <input type="text" id="zusammenfassung_an" name="zusammenfassung_an" value="{{ cfg.zusammenfassung_an }}" placeholder="uebersicht@example.com">
+      <p class="hint">Kommagetrennte Adressen für die Gesamtübersicht aller Fälligkeiten (eine E-Mail für alle).</p>
+    </div>
+
+    <h2>Prüfungsparameter</h2>
+    <div class="grid-2">
+      <div class="field">
+        <label for="warn_days">Warnfrist (Tage)</label>
+        <input type="number" id="warn_days" name="warn_days" value="{{ cfg.warn_days }}" min="1" max="365" placeholder="90">
+        <p class="hint">Wie viele Tage vor Ablauf wird gewarnt?</p>
+      </div>
+      <div class="field">
+        <label for="pruefungstypen">Aktive Prüfungstypen</label>
+        <input type="text" id="pruefungstypen" name="pruefungstypen" value="{{ cfg.pruefungstypen }}" placeholder="G25,G26,FSK">
+        <p class="hint">Kommagetrennte Kurzbezeichnungen aus MP-Feuer.</p>
+      </div>
+    </div>
+
+    <h2>Archiv &amp; Automatisierung</h2>
+    <div class="grid-2">
+      <div class="field">
+        <label for="archiv_tage">Aufbewahrungsfrist Archiv (Tage)</label>
+        <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
+        <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
+      </div>
+      <div class="field">
+        <label for="script_intervall">Script-Intervall</label>
+        <select id="script_intervall" name="script_intervall">
+          <option value="wöchentlich" {% if cfg.script_intervall == 'wöchentlich' %}selected{% endif %}>Wöchentlich</option>
+          <option value="monatlich" {% if cfg.script_intervall == 'monatlich' %}selected{% endif %}>Monatlich</option>
+          <option value="manuell" {% if cfg.script_intervall == 'manuell' %}selected{% endif %}>Nur manuell</option>
+        </select>
+        <p class="hint">Geplante automatische Ausführung (noch nicht aktiv).</p>
+      </div>
+    </div>
+
+    <button type="submit">Einstellungen speichern</button>
+  </form>
+</body>
+</html>

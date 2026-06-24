@@ -21,6 +21,24 @@ app.config.from_mapping(
 
 _initialized_dbs: set = set()
 
+SETTINGS_DEFAULTS = {
+    "smtp_host": os.getenv("SMTP_HOST", ""),
+    "smtp_port": os.getenv("SMTP_PORT", "587"),
+    "smtp_user": os.getenv("SMTP_USER", ""),
+    "smtp_password": os.getenv("SMTP_PASSWORD", ""),
+    "smtp_from": os.getenv("SMTP_FROM", ""),
+    "imap_host": os.getenv("IMAP_HOST", ""),
+    "imap_port": os.getenv("IMAP_PORT", "993"),
+    "imap_user": os.getenv("IMAP_USER", ""),
+    "imap_password": os.getenv("IMAP_PASSWORD", ""),
+    "kommandanten_cc": os.getenv("KOMMANDANTEN_CC", ""),
+    "zusammenfassung_an": os.getenv("ZUSAMMENFASSUNG_AN", ""),
+    "warn_days": os.getenv("WARN_DAYS", "90"),
+    "pruefungstypen": os.getenv("PRUEFUNGSTYPEN", "G25"),
+    "archiv_tage": "365",
+    "script_intervall": "wöchentlich",
+}
+
 
 def _data_dir() -> Path:
     return Path(current_app.config["DATA_DIR"])
@@ -60,7 +78,39 @@ def init_db():
                 fehlermeldung TEXT
             )
         """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            )
+        """)
         db.commit()
+
+
+def get_settings() -> dict:
+    result = dict(SETTINGS_DEFAULTS)
+    with closing(get_db()) as db:
+        rows = db.execute("SELECT key, value FROM settings").fetchall()
+    for row in rows:
+        result[row["key"]] = row["value"]
+    return result
+
+
+def save_settings(data: dict):
+    with closing(get_db()) as db:
+        for key, value in data.items():
+            db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+        db.commit()
+
+
+def _safe_int(val, default: int) -> int:
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return default
 
 
 @app.before_request
@@ -107,6 +157,26 @@ def upload():
     return redirect(url_for("index"))
 
 
+@app.route("/settings", methods=["GET"])
+def settings_page():
+    cfg = get_settings()
+    return render_template("settings.html", cfg=cfg)
+
+
+@app.route("/settings", methods=["POST"])
+def settings_save():
+    keys = [
+        "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
+        "imap_host", "imap_port", "imap_user", "imap_password",
+        "kommandanten_cc", "zusammenfassung_an",
+        "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
+    ]
+    data = {k: request.form.get(k, "") for k in keys}
+    save_settings(data)
+    flash("Einstellungen gespeichert.", "success")
+    return redirect(url_for("settings_page"))
+
+
 @app.route("/run", methods=["POST"])
 def run():
     if not _xls_path().exists():
@@ -119,6 +189,19 @@ def run():
     name_file = _xls_name_path()
     xls_dateiname = name_file.read_text(encoding="utf-8").strip() if name_file.exists() else "latest.xls"
 
+    cfg = get_settings()
+    warn_days = _safe_int(cfg.get("warn_days"), 90)
+    pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
+    smtp_config = {
+        "host": cfg.get("smtp_host", ""),
+        "port": _safe_int(cfg.get("smtp_port"), 587),
+        "user": cfg.get("smtp_user", ""),
+        "password": cfg.get("smtp_password", ""),
+        "from_addr": cfg.get("smtp_from", ""),
+    }
+    kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
+    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
+
     with closing(get_db()) as db:
         cursor = db.execute(
             "INSERT INTO runs (gestartet_am, dry_run, status) VALUES (?, ?, 'laufend')",
@@ -128,9 +211,11 @@ def run():
         db.commit()
 
     try:
-        persons = check_examinations(str(_xls_path()))
-        emails_gesendet = send_notifications(persons, dry_run=dry_run)
-        send_summary(persons, dry_run=dry_run)
+        persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
+        emails_gesendet = send_notifications(
+            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc
+        )
+        send_summary(persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an)
 
         abgeschlossen = datetime.now().isoformat(timespec="seconds")
         with closing(get_db()) as db:

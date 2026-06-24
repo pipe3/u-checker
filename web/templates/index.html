@@ -34,6 +34,7 @@
 </head>
 <body>
   <h1>Untersuchungs-Checker</h1>
+  <nav style="margin-bottom:1rem;font-size:0.9rem;"><a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a></nav>
 
   {% for category, message in get_flashed_messages(with_categories=true) %}
   <div class="flash {{ category }}">{{ message }}</div>
