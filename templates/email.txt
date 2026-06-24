@@ -1,0 +1,12 @@
+Hallo {vorname} {nachname},
+
+bei der Prüfung Ihrer Untersuchungsfristen wurden folgende Punkte festgestellt:
+
+{pruefungen_liste}
+
+Bitte kümmern Sie sich zeitnah um eine Verlängerung bzw. Erneuerung der entsprechenden Untersuchung(en).
+
+Bei Fragen wenden Sie sich bitte an den Kommandanten.
+
+Mit freundlichen Grüßen
+Ihre Feuerwehr Umkirch

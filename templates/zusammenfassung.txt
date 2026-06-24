@@ -1,0 +1,6 @@
+Übersicht ablaufende Untersuchungen – Stand {datum}
+
+{zusammenfassung}
+
+---
+Gesamt: {anzahl_personen} Person(en) mit Handlungsbedarf ({anzahl_abgelaufen} abgelaufen, {anzahl_warnung} Warnung)
