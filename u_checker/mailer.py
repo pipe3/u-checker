@@ -4,8 +4,9 @@ from datetime import date
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+from typing import List
 
-from checker import Person
+from u_checker.checker import Person
 
 SMTP_HOST = os.getenv("SMTP_HOST", "localhost")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -62,10 +63,10 @@ def _send(msg: dict):
         server.sendmail(SMTP_FROM, alle_empfaenger, mime.as_string())
 
 
-def _build_zusammenfassung(persons: "list[Person]") -> dict:
+def _build_zusammenfassung(persons: List[Person]) -> dict:
     template = ZUSAMMENFASSUNG_TEMPLATE_PATH.read_text(encoding="utf-8")
+    heute = date.today()
 
-    # Alle Prüfungen flach auflisten und nach Datum sortieren (dringendste zuerst)
     eintraege = []
     for person in persons:
         for p in person.pruefungen:
@@ -85,11 +86,11 @@ def _build_zusammenfassung(persons: "list[Person]") -> dict:
     if warnungen:
         zeilen.append("WARNUNG:")
         for person, pr in warnungen:
-            tage = (pr.datum - date.today()).days
+            tage = (pr.datum - heute).days
             zeilen.append(f"  - {person.nachname}, {person.vorname}: {pr.beschreibung} – {pr.datum.strftime('%d.%m.%Y')} (in {tage} Tagen)")
 
     body = template.format(
-        datum=date.today().strftime("%d.%m.%Y"),
+        datum=heute.strftime("%d.%m.%Y"),
         zusammenfassung="\n".join(zeilen),
         anzahl_personen=len(persons),
         anzahl_abgelaufen=len(abgelaufen),
@@ -97,12 +98,12 @@ def _build_zusammenfassung(persons: "list[Person]") -> dict:
     )
     return {
         "to": ZUSAMMENFASSUNG_AN,
-        "subject": f"Übersicht ablaufende Untersuchungen – {date.today().strftime('%d.%m.%Y')}",
+        "subject": f"Übersicht ablaufende Untersuchungen – {heute.strftime('%d.%m.%Y')}",
         "body": body,
     }
 
 
-def send_summary(persons: "list[Person]", dry_run: bool = False):
+def send_summary(persons: List[Person], dry_run: bool = False):
     if not ZUSAMMENFASSUNG_AN:
         return
 
@@ -129,7 +130,7 @@ def send_summary(persons: "list[Person]", dry_run: bool = False):
         print(f"Zusammenfassung gesendet an {', '.join(msg['to'])}")
 
 
-def send_notifications(persons: "list[Person]", dry_run: bool = False):
+def send_notifications(persons: List[Person], dry_run: bool = False):
     if not persons:
         print("Keine Personen mit Handlungsbedarf gefunden.")
         return

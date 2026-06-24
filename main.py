@@ -6,8 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-from checker import check_examinations, PRUEFUNGSTYPEN, WARN_DAYS
-from mailer import send_notifications, send_summary
+from u_checker import check_examinations, send_notifications, send_summary
+from u_checker.checker import PRUEFUNGSTYPEN, WARN_DAYS
 
 
 def main():
