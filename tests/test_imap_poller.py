@@ -264,3 +264,139 @@ def test_poll_fehler_beim_imap_abruf_gibt_null_zurueck(db_app):
             result = poll_inbox(app)
 
     assert result == 0
+
+
+# --- Extraktion + UNKLARE_ZUORDNUNG + Duplikate ---
+
+_MEMBERS = [
+    {"pers_nr": "001", "vorname": "Max", "nachname": "Mustermann", "email": "max@example.com"},
+]
+
+
+def test_process_email_extrahiert_pruefungstyp_und_datum(db_app):
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    raw = _make_raw_email(
+        from_addr="Max Mustermann <max@example.com>",
+        subject="G25 Nachweis",
+        body="G25 Untersuchung\nGültig bis: 31.12.2026",
+    )
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS):
+            with patch("web.imap_poller.extract_from_email") as mock_extract:
+                from datetime import date
+                mock_extract.return_value = {
+                    "pruefungstyp": "G25",
+                    "faelligkeitsdatum": date(2026, 12, 31),
+                    "mitglied": _MEMBERS[0],
+                    "match_score": 1.0,
+                    "raw_text": "G25 Gültig bis 31.12.2026",
+                }
+                with closing(get_db()) as db:
+                    process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                    db.commit()
+
+    import sqlite3
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM tasks LIMIT 1").fetchone()
+    db.close()
+    assert row["pruefungstyp"] == "G25"
+    assert row["faelligkeitsdatum"] == "2026-12-31"
+    assert row["mitglied_nr"] == "001"
+    assert row["mitglied_name"] == "Max Mustermann"
+    assert row["status"] == "NEU"
+
+
+def test_process_email_unklare_zuordnung(db_app):
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    raw = _make_raw_email(
+        from_addr="Unbekannt <nobody@example.com>",
+        subject="Nachweis",
+        body="G25 Gültig bis: 31.12.2026",
+        message_id="<unklar@example.com>",
+    )
+    with app.app_context():
+        with patch("web.imap_poller.extract_from_email") as mock_extract:
+            mock_extract.return_value = {
+                "pruefungstyp": "G25",
+                "faelligkeitsdatum": None,
+                "mitglied": None,
+                "match_score": 0.3,
+                "raw_text": "G25",
+            }
+            with closing(get_db()) as db:
+                # Mitgliederliste vorhanden aber kein Match → UNKLARE_ZUORDNUNG
+                process_email(db, raw, xls_path=None, pruefungstypen=["G25"])
+                db.commit()
+                # Da xls_path=None → members=[], score<threshold trifft nicht zu
+                # Wir simulieren mit einem gesetzten Mock direkt:
+
+    # Zweiter Versuch: members vorhanden, schlechter Score
+    import sqlite3
+    raw2 = _make_raw_email(
+        from_addr="Unbekannt <nobody2@example.com>",
+        subject="Nachweis",
+        body="G25 Gültig bis: 31.12.2026",
+        message_id="<unklar2@example.com>",
+    )
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS), \
+             patch("web.imap_poller.extract_from_email") as mock_extract:
+            mock_extract.return_value = {
+                "pruefungstyp": "G25",
+                "faelligkeitsdatum": None,
+                "mitglied": None,
+                "match_score": 0.3,
+                "raw_text": "G25",
+            }
+            with closing(get_db()) as db:
+                process_email(db, raw2, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = db.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
+    db.close()
+    assert rows[0]["status"] == "UNKLARE_ZUORDNUNG"
+
+
+def test_process_email_duplikat_markierung(db_app):
+    from web.imap_poller import process_email
+    from web.app import get_db
+    import sqlite3
+
+    def _raw(mid):
+        return _make_raw_email(
+            from_addr="Max Mustermann <max@example.com>",
+            subject="G25 Nachweis",
+            body="G25 Gültig bis 31.12.2026",
+            message_id=mid,
+        )
+
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 1.0,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, _raw("<dup-1@x.com>"), pruefungstypen=["G25"])
+                db.commit()
+            with closing(get_db()) as db:
+                process_email(db, _raw("<dup-2@x.com>"), pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = db.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+    db.close()
+    assert rows[0]["hinweis"] is None
+    assert rows[1]["hinweis"] == "Mögliches Duplikat"

@@ -97,10 +97,31 @@ def init_db():
                 betreff TEXT,
                 message_id TEXT UNIQUE,
                 raw_email BLOB,
-                anhang_count INTEGER DEFAULT 0
+                anhang_count INTEGER DEFAULT 0,
+                pruefungstyp TEXT,
+                faelligkeitsdatum TEXT,
+                mitglied_nr TEXT,
+                mitglied_name TEXT,
+                hinweis TEXT
             )
         """)
+        _migrate_tasks(db)
         db.commit()
+
+
+def _migrate_tasks(db):
+    """Fügt fehlende Spalten zur tasks-Tabelle hinzu (für bestehende DBs)."""
+    existing = {row[1] for row in db.execute("PRAGMA table_info(tasks)").fetchall()}
+    new_cols = [
+        ("pruefungstyp", "TEXT"),
+        ("faelligkeitsdatum", "TEXT"),
+        ("mitglied_nr", "TEXT"),
+        ("mitglied_name", "TEXT"),
+        ("hinweis", "TEXT"),
+    ]
+    for col, coltype in new_cols:
+        if col not in existing:
+            db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {coltype}")
 
 
 def get_settings() -> dict:
@@ -208,7 +229,7 @@ def index():
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 20").fetchall()
         tasks = db.execute("SELECT * FROM tasks ORDER BY empfangen_am DESC").fetchall()
         offene_tasks_count = db.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status = 'NEU'"
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
         ).fetchone()[0]
     xls_vorhanden = _xls_path().exists()
     xls_dateiname = None
@@ -216,6 +237,12 @@ def index():
         name_file = _xls_name_path()
         if name_file.exists():
             xls_dateiname = name_file.read_text(encoding="utf-8").strip()
+
+    members = []
+    if xls_vorhanden and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
+        from web.extractor import load_members_from_xls
+        members = load_members_from_xls(str(_xls_path()))
+
     cfg = get_settings()
     naechster_lauf = cfg.get("naechster_lauf") or None
     script_intervall = cfg.get("script_intervall", "manuell")
@@ -228,7 +255,36 @@ def index():
         xls_dateiname=xls_dateiname,
         naechster_lauf=naechster_lauf,
         script_intervall=script_intervall,
+        members=members,
     )
+
+
+@app.route("/tasks/<int:task_id>/zuordnen", methods=["POST"])
+def task_zuordnen(task_id: int):
+    pers_nr = request.form.get("pers_nr", "").strip()
+    if not pers_nr:
+        flash("Bitte ein Mitglied auswählen.", "error")
+        return redirect(url_for("index"))
+
+    from web.extractor import load_members_from_xls
+    members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
+    mitglied = next((m for m in members if m["pers_nr"] == pers_nr), None)
+    if not mitglied:
+        flash("Mitglied nicht gefunden.", "error")
+        return redirect(url_for("index"))
+
+    mitglied_name = f"{mitglied['vorname']} {mitglied['nachname']}"
+    with closing(get_db()) as db:
+        if db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+            abort(404)
+        db.execute(
+            "UPDATE tasks SET mitglied_nr = ?, mitglied_name = ?, status = 'NEU' WHERE id = ?",
+            (pers_nr, mitglied_name, task_id),
+        )
+        db.commit()
+
+    flash(f"Mitglied \"{mitglied_name}\" zugeordnet.", "success")
+    return redirect(url_for("index"))
 
 
 @app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
