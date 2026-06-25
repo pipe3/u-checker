@@ -1,0 +1,16 @@
+services:
+  web:
+    build:
+      context: https://github.com/pipe3/u-checker.git
+    ports:
+      - "5000:5000"
+    volumes:
+      - data:/data
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /data
+    restart: unless-stopped
+
+volumes:
+  data:
