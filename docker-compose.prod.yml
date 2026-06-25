@@ -7,7 +7,7 @@ services:
     volumes:
       - data:/data
     env_file:
-      - .env
+      - ~/u-checker.env
     environment:
       DATA_DIR: /data
     restart: unless-stopped
