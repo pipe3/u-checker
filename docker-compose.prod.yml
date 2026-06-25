@@ -6,8 +6,6 @@ services:
       - "5000:5000"
     volumes:
       - ${STACK_DIR}/data:/data
-    env_file:
-      - ${STACK_DIR}/u-checker.env
     environment:
       DATA_DIR: /data
     restart: unless-stopped
