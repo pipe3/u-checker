@@ -66,11 +66,11 @@
   </section>
 
   <section>
-    <h2>Script ausführen</h2>
+    <h2>Fälligkeiten prüfen</h2>
     <form action="/run" method="post">
-      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Script jetzt ausführen</button>
+      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Jetzt prüfen</button>
       <label class="dry-run">
-        <input type="checkbox" name="dry_run" value="1"> Dry-Run (kein E-Mail-Versand)
+        <input type="checkbox" name="dry_run" value="1"> Vorschau (kein Versand)
       </label>
     </form>
     {% if not xls_vorhanden %}
@@ -176,7 +176,7 @@
           <td>{{ run["gestartet_am"] | replace("T", " ") }}</td>
           <td class="status-{{ run['status'] }}">
             {{ run["status"] }}
-            {% if run["dry_run"] %}<span class="dry-run-badge">dry-run</span>{% endif %}
+            {% if run["dry_run"] %}<span class="dry-run-badge">Vorschau</span>{% endif %}
           </td>
           <td>{{ run["personen_gefunden"] if run["personen_gefunden"] is not none else "–" }}</td>
           <td>{{ run["emails_gesendet"] if run["emails_gesendet"] is not none else "–" }}</td>

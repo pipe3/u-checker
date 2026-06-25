@@ -357,6 +357,17 @@ def test_do_run_automatisch_dry_run_sendet_keine_admin_email(tmp_path):
     mock_mail.assert_not_called()
 
 
+def test_index_zeigt_neue_labels(client):
+    """UI-Labels auf der Startseite verwenden fachliche statt technische Bezeichnungen."""
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "Fälligkeiten prüfen" in body     # Abschnittsüberschrift
+    assert "Jetzt prüfen" in body            # Button (eigenständig von der Überschrift)
+    assert "Vorschau (kein Versand)" in body  # Checkbox-Label
+    assert "Script ausführen" not in body
+    assert "Dry-Run" not in body
+
+
 def test_manueller_run_route_nicht_blockiert(client, tmp_path):
     """POST /run läuft trotz offener Tasks durch (manueller Run)."""
     xls_path = tmp_path / "latest.xls"

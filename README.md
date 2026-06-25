@@ -13,7 +13,7 @@ cp .env.example .env
 ## Verwendung
 
 ```bash
-# Dry-Run: Emails anzeigen ohne zu senden
+# Vorschau: Emails anzeigen ohne zu senden
 python main.py export.xls --dry-run
 
 # Emails tatsächlich versenden
