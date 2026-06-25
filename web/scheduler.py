@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 _scheduler: BackgroundScheduler | None = None
 JOB_ID = "automatischer_lauf"
 IMAP_JOB_ID = "imap_poll"
+ARCHIV_CLEANUP_JOB_ID = "archiv_cleanup"
 IMAP_POLL_MINUTEN_DEFAULT = 5
 
 INTERVALL_DELTA: dict[str, timedelta] = {
@@ -85,6 +86,15 @@ def start(app) -> None:
                 replace_existing=True,
             )
 
+        sched.add_job(
+            _archiv_cleanup_job,
+            trigger="interval",
+            hours=24,
+            id=ARCHIV_CLEANUP_JOB_ID,
+            args=[app],
+            replace_existing=True,
+        )
+
 
 def reschedule(app) -> None:
     if app.config.get("TESTING"):
@@ -130,6 +140,15 @@ def reschedule(app) -> None:
                 replace_existing=True,
             )
 
+        sched.add_job(
+            _archiv_cleanup_job,
+            trigger="interval",
+            hours=24,
+            id=ARCHIV_CLEANUP_JOB_ID,
+            args=[app],
+            replace_existing=True,
+        )
+
 
 def stop() -> None:
     global _scheduler
@@ -158,3 +177,14 @@ def _imap_poll_job(app) -> None:
             logger.info("IMAP-Polling: %d neue Nachweise verarbeitet", count)
     except Exception:
         logger.exception("IMAP-Polling fehlgeschlagen")
+
+
+def _archiv_cleanup_job(app) -> None:
+    try:
+        with app.app_context():
+            from web.app import archiv_cleanup
+            deleted = archiv_cleanup()
+            if deleted:
+                logger.info("Archiv-Cleanup: %d veraltete Tasks gelöscht", deleted)
+    except Exception:
+        logger.exception("Archiv-Cleanup fehlgeschlagen")

@@ -43,6 +43,7 @@
   <h1>Untersuchungs-Checker</h1>
   <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
     <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
+    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
     <span>Offene Aufgaben: <span class="badge {% if offene_tasks_count == 0 %}zero{% endif %}">{{ offene_tasks_count }}</span></span>
   </nav>
 
@@ -142,6 +143,8 @@
             <form action="/tasks/{{ task['id'] }}/erledigt" method="post" style="margin:0;">
               <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem;">Erledigt</button>
             </form>
+            {% elif task["status"] == "ERLEDIGT" and task["raw_email"] %}
+            <a href="/tasks/{{ task['id'] }}/pdf" style="display:inline-block;padding:0.2rem 0.6rem;background:#198754;color:#fff;border-radius:4px;text-decoration:none;font-size:0.8rem;">PDF</a>
             {% endif %}
           </td>
         </tr>

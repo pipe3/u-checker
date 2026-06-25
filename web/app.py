@@ -1,14 +1,16 @@
 import os
+import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from flask import Flask, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, current_app, flash, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
@@ -118,6 +120,7 @@ def _migrate_tasks(db):
         ("mitglied_nr", "TEXT"),
         ("mitglied_name", "TEXT"),
         ("hinweis", "TEXT"),
+        ("erledigt_am", "TEXT"),
     ]
     for col, coltype in new_cols:
         if col not in existing:
@@ -148,6 +151,21 @@ def _safe_int(val, default: int) -> int:
         return int(val)
     except (TypeError, ValueError):
         return default
+
+
+def archiv_cleanup(archiv_tage: Optional[int] = None) -> int:
+    """Löscht ERLEDIGT-Tasks, deren erledigt_am älter als archiv_tage Tage ist."""
+    if archiv_tage is None:
+        cfg = get_settings()
+        archiv_tage = _safe_int(cfg.get("archiv_tage"), 365)
+    grenze = (datetime.now() - timedelta(days=archiv_tage)).isoformat(timespec="seconds")
+    with closing(get_db()) as db:
+        cursor = db.execute(
+            "DELETE FROM tasks WHERE status = 'ERLEDIGT' AND erledigt_am IS NOT NULL AND erledigt_am < ?",
+            (grenze,),
+        )
+        db.commit()
+        return cursor.rowcount
 
 
 def _do_run(dry_run: bool = False) -> tuple:
@@ -289,14 +307,49 @@ def task_zuordnen(task_id: int):
 
 @app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
 def task_erledigt(task_id: int):
+    now = datetime.now().isoformat(timespec="seconds")
     with closing(get_db()) as db:
         row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row is None:
             abort(404)
-        db.execute("UPDATE tasks SET status = 'ERLEDIGT' WHERE id = ?", (task_id,))
+        db.execute(
+            "UPDATE tasks SET status = 'ERLEDIGT', erledigt_am = COALESCE(erledigt_am, ?) WHERE id = ?",
+            (now, task_id),
+        )
         db.commit()
     flash("Aufgabe als erledigt markiert.", "success")
     return redirect(url_for("index"))
+
+
+@app.route("/tasks/<int:task_id>/pdf")
+def task_pdf(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        abort(404)
+    if not row["raw_email"]:
+        abort(404)
+
+    from web.pdf_export import email_to_pdf
+    pdf_bytes = email_to_pdf(bytes(row["raw_email"]))
+
+    betreff = row["betreff"] or f"nachweis-{task_id}"
+    filename = re.sub(r"[^\w\-]", "_", betreff.encode("ascii", "ignore").decode())[:60] + ".pdf"
+
+    return Response(
+        pdf_bytes,
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.route("/archiv")
+def archiv():
+    with closing(get_db()) as db:
+        tasks = db.execute(
+            "SELECT * FROM tasks WHERE status = 'ERLEDIGT' ORDER BY erledigt_am DESC"
+        ).fetchall()
+    return render_template("archiv.html", tasks=tasks)
 
 
 @app.route("/upload", methods=["POST"])

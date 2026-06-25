@@ -10,7 +10,8 @@
       "Bash(gh label *)",
       "Bash(gh issue *)",
       "Bash(gh repo *)",
-      "Bash(python -m pytest *)"
+      "Bash(python -m pytest *)",
+      "Bash(git add *)"
     ],
     "additionalDirectories": [
       "CLAUDE_DIR/commands"

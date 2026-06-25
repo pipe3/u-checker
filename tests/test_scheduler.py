@@ -127,9 +127,11 @@ def test_zeitplan_wird_nach_neustart_wiederhergestellt(tmp_path):
             sched._scheduler = None
             sched.start(app)
 
-        mock_bg.add_job.assert_called_once()
-        _, kwargs = mock_bg.add_job.call_args
-        assert kwargs["run_date"] == future_dt
+        # Mindestens der Zeitplan-Job muss registriert worden sein
+        calls_kwargs = [call[1] for call in mock_bg.add_job.call_args_list]
+        zeitplan_calls = [kw for kw in calls_kwargs if kw.get("id") == "automatischer_lauf"]
+        assert len(zeitplan_calls) == 1
+        assert zeitplan_calls[0]["run_date"] == future_dt
     finally:
         app.config["TESTING"] = True
         sched.stop()
@@ -153,7 +155,10 @@ def test_zeitplan_manuell_startet_keinen_job(tmp_path):
             sched._scheduler = None
             sched.start(app)
 
-        mock_bg.add_job.assert_not_called()
+        # Im manuell-Modus darf kein Zeitplan-Job registriert werden (nur Cleanup-Job ist ok)
+        calls_kwargs = [call[1] for call in mock_bg.add_job.call_args_list]
+        zeitplan_calls = [kw for kw in calls_kwargs if kw.get("id") == "automatischer_lauf"]
+        assert len(zeitplan_calls) == 0
     finally:
         app.config["TESTING"] = True
         sched.stop()
