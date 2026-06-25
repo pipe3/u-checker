@@ -20,6 +20,7 @@ app.config.from_mapping(
 )
 
 _initialized_dbs: set = set()
+_scheduler_started = False
 
 SETTINGS_DEFAULTS = {
     "smtp_host": os.getenv("SMTP_HOST", ""),
@@ -37,6 +38,7 @@ SETTINGS_DEFAULTS = {
     "pruefungstypen": os.getenv("PRUEFUNGSTYPEN", "G25"),
     "archiv_tage": "365",
     "script_intervall": "wöchentlich",
+    "naechster_lauf": "",
 }
 
 
@@ -113,12 +115,77 @@ def _safe_int(val, default: int) -> int:
         return default
 
 
+def _do_run(dry_run: bool = False) -> tuple:
+    """Lauf ausführen; schreibt immer einen DB-Eintrag, auch bei FileNotFoundError."""
+    gestartet = datetime.now().isoformat(timespec="seconds")
+    with closing(get_db()) as db:
+        cursor = db.execute(
+            "INSERT INTO runs (gestartet_am, dry_run, status) VALUES (?, ?, 'laufend')",
+            (gestartet, int(dry_run)),
+        )
+        run_id = cursor.lastrowid
+        db.commit()
+
+    try:
+        if not _xls_path().exists():
+            raise FileNotFoundError("Keine XLS-Datei vorhanden")
+
+        name_file = _xls_name_path()
+        xls_dateiname = name_file.read_text(encoding="utf-8").strip() if name_file.exists() else "latest.xls"
+
+        cfg = get_settings()
+        warn_days = _safe_int(cfg.get("warn_days"), 90)
+        pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
+        smtp_config = {
+            "host": cfg.get("smtp_host", ""),
+            "port": _safe_int(cfg.get("smtp_port"), 587),
+            "user": cfg.get("smtp_user", ""),
+            "password": cfg.get("smtp_password", ""),
+            "from_addr": cfg.get("smtp_from", ""),
+        }
+        kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
+        zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
+
+        persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
+        emails_gesendet = send_notifications(
+            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc
+        )
+        send_summary(persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an)
+
+        abgeschlossen = datetime.now().isoformat(timespec="seconds")
+        with closing(get_db()) as db:
+            db.execute(
+                """UPDATE runs SET
+                   abgeschlossen_am=?, xls_dateiname=?,
+                   personen_gefunden=?, emails_gesendet=?, status='fertig'
+                   WHERE id=?""",
+                (abgeschlossen, xls_dateiname, len(persons), emails_gesendet, run_id),
+            )
+            db.commit()
+
+        return len(persons), emails_gesendet
+    except Exception as e:
+        abgeschlossen = datetime.now().isoformat(timespec="seconds")
+        with closing(get_db()) as db:
+            db.execute(
+                "UPDATE runs SET abgeschlossen_am=?, status='fehler', fehlermeldung=? WHERE id=?",
+                (abgeschlossen, str(e), run_id),
+            )
+            db.commit()
+        raise
+
+
 @app.before_request
 def _ensure_db():
+    global _scheduler_started
     db_path = str(_db_path())
     if db_path not in _initialized_dbs:
         init_db()
         _initialized_dbs.add(db_path)
+    if not _scheduler_started and not current_app.config.get("TESTING"):
+        from web import scheduler
+        scheduler.start(app)
+        _scheduler_started = True
 
 
 @app.route("/")
@@ -131,7 +198,17 @@ def index():
         name_file = _xls_name_path()
         if name_file.exists():
             xls_dateiname = name_file.read_text(encoding="utf-8").strip()
-    return render_template("index.html", runs=runs, xls_vorhanden=xls_vorhanden, xls_dateiname=xls_dateiname)
+    cfg = get_settings()
+    naechster_lauf = cfg.get("naechster_lauf") or None
+    script_intervall = cfg.get("script_intervall", "manuell")
+    return render_template(
+        "index.html",
+        runs=runs,
+        xls_vorhanden=xls_vorhanden,
+        xls_dateiname=xls_dateiname,
+        naechster_lauf=naechster_lauf,
+        script_intervall=script_intervall,
+    )
 
 
 @app.route("/upload", methods=["POST"])
@@ -173,6 +250,10 @@ def settings_save():
     ]
     data = {k: request.form.get(k, "") for k in keys}
     save_settings(data)
+
+    from web import scheduler
+    scheduler.reschedule(app)
+
     flash("Einstellungen gespeichert.", "success")
     return redirect(url_for("settings_page"))
 
@@ -184,64 +265,16 @@ def run():
         return redirect(url_for("index"))
 
     dry_run = request.form.get("dry_run") == "1"
-    gestartet = datetime.now().isoformat(timespec="seconds")
-
-    name_file = _xls_name_path()
-    xls_dateiname = name_file.read_text(encoding="utf-8").strip() if name_file.exists() else "latest.xls"
-
-    cfg = get_settings()
-    warn_days = _safe_int(cfg.get("warn_days"), 90)
-    pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
-    smtp_config = {
-        "host": cfg.get("smtp_host", ""),
-        "port": _safe_int(cfg.get("smtp_port"), 587),
-        "user": cfg.get("smtp_user", ""),
-        "password": cfg.get("smtp_password", ""),
-        "from_addr": cfg.get("smtp_from", ""),
-    }
-    kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
-    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
-
-    with closing(get_db()) as db:
-        cursor = db.execute(
-            "INSERT INTO runs (gestartet_am, dry_run, status) VALUES (?, ?, 'laufend')",
-            (gestartet, int(dry_run)),
-        )
-        run_id = cursor.lastrowid
-        db.commit()
 
     try:
-        persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
-        emails_gesendet = send_notifications(
-            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc
-        )
-        send_summary(persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an)
-
-        abgeschlossen = datetime.now().isoformat(timespec="seconds")
-        with closing(get_db()) as db:
-            db.execute(
-                """UPDATE runs SET
-                   abgeschlossen_am=?, xls_dateiname=?,
-                   personen_gefunden=?, emails_gesendet=?, status='fertig'
-                   WHERE id=?""",
-                (abgeschlossen, xls_dateiname, len(persons), emails_gesendet, run_id),
-            )
-            db.commit()
-
+        personen, emails = _do_run(dry_run=dry_run)
         modus = " (DRY-RUN)" if dry_run else ""
         flash(
-            f"Lauf abgeschlossen{modus}: {len(persons)} Person(en) mit Handlungsbedarf, "
-            f"{emails_gesendet} E-Mail(s) verarbeitet.",
+            f"Lauf abgeschlossen{modus}: {personen} Person(en) mit Handlungsbedarf, "
+            f"{emails} E-Mail(s) verarbeitet.",
             "success",
         )
     except Exception as e:
-        abgeschlossen = datetime.now().isoformat(timespec="seconds")
-        with closing(get_db()) as db:
-            db.execute(
-                "UPDATE runs SET abgeschlossen_am=?, status='fehler', fehlermeldung=? WHERE id=?",
-                (abgeschlossen, str(e), run_id),
-            )
-            db.commit()
         flash(f"Fehler beim Ausführen: {e}", "error")
 
     return redirect(url_for("index"))
