@@ -162,7 +162,7 @@ def _job_ausfuehren(app) -> None:
         with app.app_context():
             from web.app import _do_run
             logger.info("Automatischer Lauf gestartet")
-            _do_run(dry_run=False)
+            _do_run(dry_run=False, manuell=False)
     except Exception:
         logger.exception("Automatischer Lauf fehlgeschlagen")
     finally:

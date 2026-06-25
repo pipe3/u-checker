@@ -166,6 +166,25 @@ def test_zeitplan_manuell_startet_keinen_job(tmp_path):
 
 # --- naechster_lauf wird in DB gespeichert ---
 
+def test_job_ausfuehren_ruft_do_run_mit_manuell_false(tmp_path):
+    """_job_ausfuehren muss _do_run mit manuell=False aufrufen (automatischer Lauf)."""
+    from web.app import app, init_db
+    from web.scheduler import _job_ausfuehren
+
+    app.config["TESTING"] = True
+    app.config["DATA_DIR"] = tmp_path
+
+    with app.app_context():
+        init_db()
+
+    with app.app_context(), \
+         patch("web.app._do_run", return_value=(0, 0)) as mock_do_run, \
+         patch("web.scheduler.reschedule"):
+        _job_ausfuehren(app)
+
+    mock_do_run.assert_called_once_with(dry_run=False, manuell=False)
+
+
 def test_naechster_lauf_wird_in_db_gespeichert_nach_reschedule(tmp_path):
     from web.app import app, init_db, save_settings, get_settings
     from web import scheduler as sched

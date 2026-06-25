@@ -14,6 +14,7 @@ from flask import Flask, Response, abort, current_app, flash, redirect, render_t
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
+from u_checker.mailer import send_simple_mail
 
 app = Flask(__name__)
 app.config.from_mapping(
@@ -168,8 +169,55 @@ def archiv_cleanup(archiv_tage: Optional[int] = None) -> int:
         return cursor.rowcount
 
 
-def _do_run(dry_run: bool = False) -> tuple:
+def _build_smtp_config(cfg: dict) -> dict:
+    return {
+        "host": cfg.get("smtp_host", ""),
+        "port": _safe_int(cfg.get("smtp_port"), 587),
+        "user": cfg.get("smtp_user", ""),
+        "password": cfg.get("smtp_password", ""),
+        "from_addr": cfg.get("smtp_from", ""),
+    }
+
+
+def _send_blockier_benachrichtigung(offene_count: int, dry_run: bool = False) -> None:
+    if dry_run:
+        return
+    cfg = get_settings()
+    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
+    if not zusammenfassung_an:
+        return
+    send_simple_mail(
+        smtp_config=_build_smtp_config(cfg),
+        to_addrs=zusammenfassung_an,
+        subject=f"Automatischer Lauf blockiert: {offene_count} offene Task(s)",
+        body=(
+            f"Der geplante automatische Lauf wurde übersprungen, weil {offene_count} "
+            f"offene Task(s) in der Warteschlange vorhanden sind.\n\n"
+            f"Bitte die offenen Tasks manuell abarbeiten und anschließend den Lauf "
+            f"manuell starten."
+        ),
+    )
+
+
+def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
     """Lauf ausführen; schreibt immer einen DB-Eintrag, auch bei FileNotFoundError."""
+    if not manuell:
+        with closing(get_db()) as db:
+            offene_count = db.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
+            ).fetchone()[0]
+        if offene_count > 0:
+            gestartet = datetime.now().isoformat(timespec="seconds")
+            with closing(get_db()) as db:
+                db.execute(
+                    "INSERT INTO runs (gestartet_am, abgeschlossen_am, dry_run, status, fehlermeldung) "
+                    "VALUES (?, ?, ?, 'blockiert', ?)",
+                    (gestartet, gestartet, int(dry_run), f"{offene_count} offene Task(s)"),
+                )
+                db.commit()
+            _send_blockier_benachrichtigung(offene_count, dry_run=dry_run)
+            return 0, 0
+
     gestartet = datetime.now().isoformat(timespec="seconds")
     with closing(get_db()) as db:
         cursor = db.execute(
@@ -189,13 +237,7 @@ def _do_run(dry_run: bool = False) -> tuple:
         cfg = get_settings()
         warn_days = _safe_int(cfg.get("warn_days"), 90)
         pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
-        smtp_config = {
-            "host": cfg.get("smtp_host", ""),
-            "port": _safe_int(cfg.get("smtp_port"), 587),
-            "user": cfg.get("smtp_user", ""),
-            "password": cfg.get("smtp_password", ""),
-            "from_addr": cfg.get("smtp_from", ""),
-        }
+        smtp_config = _build_smtp_config(cfg)
         kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
         zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
 

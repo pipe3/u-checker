@@ -111,6 +111,12 @@ def _build_zusammenfassung(persons: List[Person], zusammenfassung_an: list) -> d
     }
 
 
+def send_simple_mail(smtp_config: dict, to_addrs: list, subject: str, body: str) -> None:
+    if not to_addrs:
+        return
+    _send({"to": to_addrs, "subject": subject, "body": body}, smtp_config)
+
+
 def send_summary(
     persons: List[Person],
     *,
