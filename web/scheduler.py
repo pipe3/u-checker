@@ -9,6 +9,8 @@ logger = logging.getLogger(__name__)
 
 _scheduler: BackgroundScheduler | None = None
 JOB_ID = "automatischer_lauf"
+IMAP_JOB_ID = "imap_poll"
+IMAP_POLL_MINUTEN_DEFAULT = 5
 
 INTERVALL_DELTA: dict[str, timedelta] = {
     "wöchentlich": timedelta(weeks=1),
@@ -40,34 +42,45 @@ def start(app) -> None:
         return
 
     with app.app_context():
-        from web.app import get_settings, save_settings
+        from web.app import _safe_int, get_settings, save_settings
 
         cfg = get_settings()
         intervall = cfg.get("script_intervall", "manuell")
+        sched = _ensure_scheduler()
 
-        if intervall == "manuell":
-            return
+        if intervall != "manuell":
+            naechster_str = cfg.get("naechster_lauf", "")
+            naechster: datetime | None = None
 
-        naechster_str = cfg.get("naechster_lauf", "")
-        naechster: datetime | None = None
+            if naechster_str:
+                try:
+                    naechster = datetime.fromisoformat(naechster_str)
+                except ValueError:
+                    naechster = None
 
-        if naechster_str:
-            try:
-                naechster = datetime.fromisoformat(naechster_str)
-            except ValueError:
-                naechster = None
+            if naechster is None or naechster <= datetime.now():
+                naechster = naechster_lauf_berechnen(intervall)
+                if naechster:
+                    save_settings({"naechster_lauf": naechster.isoformat(timespec="seconds")})
 
-        if naechster is None or naechster <= datetime.now():
-            naechster = naechster_lauf_berechnen(intervall)
             if naechster:
-                save_settings({"naechster_lauf": naechster.isoformat(timespec="seconds")})
+                sched.add_job(
+                    _job_ausfuehren,
+                    trigger="date",
+                    run_date=naechster,
+                    id=JOB_ID,
+                    args=[app],
+                    replace_existing=True,
+                )
 
-        if naechster:
-            _ensure_scheduler().add_job(
-                _job_ausfuehren,
-                trigger="date",
-                run_date=naechster,
-                id=JOB_ID,
+        imap_host = cfg.get("imap_host", "").strip()
+        if imap_host:
+            minuten = _safe_int(cfg.get("imap_poll_minuten"), IMAP_POLL_MINUTEN_DEFAULT)
+            sched.add_job(
+                _imap_poll_job,
+                trigger="interval",
+                minutes=minuten,
+                id=IMAP_JOB_ID,
                 args=[app],
                 replace_existing=True,
             )
@@ -78,26 +91,41 @@ def reschedule(app) -> None:
         return
 
     with app.app_context():
-        from web.app import get_settings, save_settings
+        from web.app import _safe_int, get_settings, save_settings
 
         cfg = get_settings()
         intervall = cfg.get("script_intervall", "manuell")
+        sched = _ensure_scheduler()
 
-        if _scheduler is not None and _scheduler.get_job(JOB_ID):
-            _scheduler.remove_job(JOB_ID)
+        if sched.get_job(JOB_ID):
+            sched.remove_job(JOB_ID)
 
         if intervall == "manuell":
             save_settings({"naechster_lauf": ""})
-            return
+        else:
+            naechster = naechster_lauf_berechnen(intervall)
+            if naechster:
+                save_settings({"naechster_lauf": naechster.isoformat(timespec="seconds")})
+                sched.add_job(
+                    _job_ausfuehren,
+                    trigger="date",
+                    run_date=naechster,
+                    id=JOB_ID,
+                    args=[app],
+                    replace_existing=True,
+                )
 
-        naechster = naechster_lauf_berechnen(intervall)
-        if naechster:
-            save_settings({"naechster_lauf": naechster.isoformat(timespec="seconds")})
-            _ensure_scheduler().add_job(
-                _job_ausfuehren,
-                trigger="date",
-                run_date=naechster,
-                id=JOB_ID,
+        if sched.get_job(IMAP_JOB_ID):
+            sched.remove_job(IMAP_JOB_ID)
+
+        imap_host = cfg.get("imap_host", "").strip()
+        if imap_host:
+            minuten = _safe_int(cfg.get("imap_poll_minuten"), IMAP_POLL_MINUTEN_DEFAULT)
+            sched.add_job(
+                _imap_poll_job,
+                trigger="interval",
+                minutes=minuten,
+                id=IMAP_JOB_ID,
                 args=[app],
                 replace_existing=True,
             )
@@ -120,3 +148,13 @@ def _job_ausfuehren(app) -> None:
         logger.exception("Automatischer Lauf fehlgeschlagen")
     finally:
         reschedule(app)
+
+
+def _imap_poll_job(app) -> None:
+    try:
+        from web.imap_poller import poll_inbox
+        count = poll_inbox(app)
+        if count:
+            logger.info("IMAP-Polling: %d neue Nachweise verarbeitet", count)
+    except Exception:
+        logger.exception("IMAP-Polling fehlgeschlagen")

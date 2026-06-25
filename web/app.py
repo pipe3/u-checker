@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from flask import Flask, current_app, flash, redirect, render_template, request, url_for
+from flask import Flask, abort, current_app, flash, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
@@ -32,6 +32,7 @@ SETTINGS_DEFAULTS = {
     "imap_port": os.getenv("IMAP_PORT", "993"),
     "imap_user": os.getenv("IMAP_USER", ""),
     "imap_password": os.getenv("IMAP_PASSWORD", ""),
+    "imap_poll_minuten": os.getenv("IMAP_POLL_MINUTEN", "5"),
     "kommandanten_cc": os.getenv("KOMMANDANTEN_CC", ""),
     "zusammenfassung_an": os.getenv("ZUSAMMENFASSUNG_AN", ""),
     "warn_days": os.getenv("WARN_DAYS", "90"),
@@ -84,6 +85,19 @@ def init_db():
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                status TEXT NOT NULL DEFAULT 'NEU',
+                empfangen_am TEXT NOT NULL,
+                von_email TEXT,
+                von_name TEXT,
+                betreff TEXT,
+                message_id TEXT UNIQUE,
+                raw_email BLOB,
+                anhang_count INTEGER DEFAULT 0
             )
         """)
         db.commit()
@@ -192,6 +206,10 @@ def _ensure_db():
 def index():
     with closing(get_db()) as db:
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 20").fetchall()
+        tasks = db.execute("SELECT * FROM tasks ORDER BY empfangen_am DESC").fetchall()
+        offene_tasks_count = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'NEU'"
+        ).fetchone()[0]
     xls_vorhanden = _xls_path().exists()
     xls_dateiname = None
     if xls_vorhanden:
@@ -204,11 +222,25 @@ def index():
     return render_template(
         "index.html",
         runs=runs,
+        tasks=tasks,
+        offene_tasks_count=offene_tasks_count,
         xls_vorhanden=xls_vorhanden,
         xls_dateiname=xls_dateiname,
         naechster_lauf=naechster_lauf,
         script_intervall=script_intervall,
     )
+
+
+@app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
+def task_erledigt(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404)
+        db.execute("UPDATE tasks SET status = 'ERLEDIGT' WHERE id = ?", (task_id,))
+        db.commit()
+    flash("Aufgabe als erledigt markiert.", "success")
+    return redirect(url_for("index"))
 
 
 @app.route("/upload", methods=["POST"])
@@ -244,7 +276,7 @@ def settings_page():
 def settings_save():
     keys = [
         "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
-        "imap_host", "imap_port", "imap_user", "imap_password",
+        "imap_host", "imap_port", "imap_user", "imap_password", "imap_poll_minuten",
         "kommandanten_cc", "zusammenfassung_an",
         "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
     ]

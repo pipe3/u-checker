@@ -158,3 +158,70 @@ def test_run_zeigt_anzahl_in_erfolgsmeldung(client, tmp_path):
 
     assert b"1 Person" in response.data
     assert b"1 E-Mail" in response.data
+
+
+# --- Task-Liste ---
+
+def test_index_zeigt_tasks_bereich(client):
+    response = client.get("/")
+    assert b"Eingehende Nachweise" in response.data
+
+
+def test_index_zeigt_badge_mit_null_wenn_keine_tasks(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    # Badge-Zähler muss 0 zeigen wenn keine offenen Tasks
+    assert b"0" in response.data
+
+
+def test_index_badge_zaehlt_neu_tasks(client, tmp_path):
+    import sqlite3
+    from datetime import datetime
+
+    # Erster Request initialisiert die DB
+    client.get("/")
+
+    db_path = tmp_path / "checker.db"
+    db = sqlite3.connect(db_path)
+    db.execute("""
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff)
+        VALUES ('NEU', ?, 'sender@example.com', 'Test Nachweis')
+    """, (datetime.now().isoformat(timespec="seconds"),))
+    db.commit()
+    db.close()
+
+    response = client.get("/")
+    assert b"1" in response.data
+
+
+def test_task_als_erledigt_markieren(client, tmp_path):
+    import sqlite3
+    from datetime import datetime
+
+    # Erster Request initialisiert die DB
+    client.get("/")
+
+    db_path = tmp_path / "checker.db"
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    db.execute("""
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff)
+        VALUES ('NEU', ?, 'sender@example.com', 'Test Nachweis')
+    """, (datetime.now().isoformat(timespec="seconds"),))
+    db.commit()
+    task_id = db.execute("SELECT id FROM tasks LIMIT 1").fetchone()["id"]
+    db.close()
+
+    response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "ERLEDIGT"
+
+
+def test_task_erledigt_unbekannte_id_gibt_404(client):
+    response = client.post("/tasks/9999/erledigt")
+    assert response.status_code == 404
