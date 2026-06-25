@@ -458,6 +458,26 @@ def settings_save():
     return redirect(url_for("settings_page"))
 
 
+@app.route("/settings/smtp-test", methods=["POST"])
+def settings_smtp_test():
+    cfg = get_settings()
+    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
+    if not zusammenfassung_an:
+        flash("Bitte zuerst eine Gesamtübersichts-Adresse unter \"Empfänger\" eintragen.", "error")
+        return redirect(url_for("settings_page"))
+    try:
+        send_simple_mail(
+            smtp_config=_build_smtp_config(cfg),
+            to_addrs=zusammenfassung_an,
+            subject="Test-Mail – Untersuchungs-Checker",
+            body="Dies ist eine Test-Mail vom Untersuchungs-Checker.\n\nDie SMTP-Konfiguration funktioniert korrekt.",
+        )
+        flash(f"Test-Mail erfolgreich gesendet an {', '.join(zusammenfassung_an)}.", "success")
+    except Exception as e:
+        flash(f"SMTP-Fehler: {e}", "error")
+    return redirect(url_for("settings_page"))
+
+
 @app.route("/run", methods=["POST"])
 def run():
     if not _xls_path().exists():

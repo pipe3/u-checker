@@ -432,3 +432,60 @@ def test_loeschen_schaltflaeche_nicht_sichtbar_ohne_xls(client):
     response = client.get("/")
     body = response.data.decode("utf-8")
     assert "/upload/loeschen" not in body
+
+
+# --- SMTP-Test: Issue #13 ---
+
+def test_smtp_test_ruft_send_simple_mail_mit_zusammenfassung_an_auf(client, tmp_path):
+    """POST /settings/smtp-test sendet Test-Mail an konfigurierte zusammenfassung_an-Adresse."""
+    client.get("/")
+    from web.app import save_settings
+    with app.app_context():
+        save_settings({
+            "zusammenfassung_an": "admin@example.com",
+            "smtp_host": "smtp.example.com",
+            "smtp_port": "587",
+            "smtp_user": "user",
+            "smtp_password": "pass",
+            "smtp_from": "from@example.com",
+        })
+
+    with patch("web.app.send_simple_mail") as mock_mail:
+        response = client.post("/settings/smtp-test", follow_redirects=True)
+
+    assert response.status_code == 200
+    mock_mail.assert_called_once()
+    call_kwargs = mock_mail.call_args
+    to_addrs = call_kwargs[1]["to_addrs"] if call_kwargs[1] else call_kwargs[0][1]
+    assert "admin@example.com" in to_addrs
+
+
+def test_smtp_test_fehler_wenn_zusammenfassung_an_leer(client):
+    """POST /settings/smtp-test zeigt Fehlermeldung wenn zusammenfassung_an nicht konfiguriert."""
+    client.get("/")
+    from web.app import save_settings
+    with app.app_context():
+        save_settings({"zusammenfassung_an": ""})
+
+    with patch("web.app.send_simple_mail") as mock_mail:
+        response = client.post("/settings/smtp-test", follow_redirects=True)
+
+    assert response.status_code == 200
+    mock_mail.assert_not_called()
+    assert "Gesamtübersichts-Adresse" in response.data.decode("utf-8")
+
+
+def test_smtp_test_fehlermeldung_bei_smtp_fehler(client, tmp_path):
+    """POST /settings/smtp-test zeigt Fehlermeldung bei SMTP-Verbindungsfehler."""
+    client.get("/")
+    from web.app import save_settings
+    with app.app_context():
+        save_settings({"zusammenfassung_an": "admin@example.com"})
+
+    import smtplib
+    with patch("web.app.send_simple_mail", side_effect=smtplib.SMTPException("Verbindungsfehler")):
+        response = client.post("/settings/smtp-test", follow_redirects=True)
+
+    assert response.status_code == 200
+    body = response.data.decode("utf-8")
+    assert "Verbindungsfehler" in body or "SMTP" in body
