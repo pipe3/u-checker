@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+ENV PYTHONPATH=/app
 ENV DATA_DIR=/data
 EXPOSE 5000
 
