@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ergebnis – Untersuchungs-Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    section { margin-bottom: 2rem; }
+    .vorschau-banner { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 0.6rem 1rem; margin-bottom: 1rem; font-size: 0.9rem; color: #856404; font-weight: 600; }
+    .kurzuebersicht { display: flex; gap: 1.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+    .kachel { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 0.8rem 1.2rem; min-width: 130px; text-align: center; }
+    .kachel .zahl { font-size: 1.8rem; font-weight: 700; line-height: 1.1; }
+    .kachel .label { font-size: 0.8rem; color: #666; margin-top: 0.2rem; }
+    .kachel.abgelaufen .zahl { color: #721c24; }
+    .kachel.warnung .zahl { color: #856404; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
+    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .status-abgelaufen { color: #721c24; font-weight: 600; }
+    .status-warnung { color: #856404; font-weight: 600; }
+    p.empty { color: #888; font-size: 0.9rem; }
+    .back-link { display: inline-block; margin-top: 1rem; color: #0d6efd; text-decoration: none; font-size: 0.9rem; }
+    .back-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <h1>Untersuchungs-Checker</h1>
+
+  {% if dry_run %}
+  <div class="vorschau-banner">Vorschau – kein E-Mail-Versand durchgeführt</div>
+  {% endif %}
+
+  <section>
+    <h2>Ergebnis{% if dry_run %} (Vorschau){% endif %}</h2>
+    <div class="kurzuebersicht">
+      <div class="kachel">
+        <div class="zahl">{{ personen_count }}</div>
+        <div class="label">{{ personen_count }} Person(en) mit Handlungsbedarf</div>
+      </div>
+      <div class="kachel abgelaufen">
+        <div class="zahl">{{ abgelaufen_count }}</div>
+        <div class="label">{{ abgelaufen_count }} abgelaufen</div>
+      </div>
+      <div class="kachel warnung">
+        <div class="zahl">{{ warnung_count }}</div>
+        <div class="label">{{ warnung_count }} Warnung(en)</div>
+      </div>
+      <div class="kachel">
+        <div class="zahl">{{ emails_count }}</div>
+        <div class="label">{{ emails_count }} E-Mail(s) {% if dry_run %}würden versendet werden{% else %}versendet{% endif %}</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Personen mit Handlungsbedarf</h2>
+    {% if rows %}
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Prüfung</th>
+          <th>Fällig am</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.name }}</td>
+          <td>{{ row.beschreibung }}</td>
+          <td style="white-space:nowrap;">{{ row.datum }}</td>
+          <td class="status-{{ row.status }}">{{ row.status | capitalize }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Keine Fälligkeiten gefunden.</p>
+    {% endif %}
+  </section>
+
+  <a href="/" class="back-link">← Zurück zur Startseite</a>
+</body>
+</html>

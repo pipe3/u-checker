@@ -222,7 +222,7 @@ def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
                 _send_blockier_benachrichtigung(offene_count, dry_run=dry_run)
             except Exception:
                 logger.exception("Blockier-Benachrichtigung konnte nicht gesendet werden")
-            return 0, 0
+            return [], 0
 
     gestartet = datetime.now().isoformat(timespec="seconds")
     with closing(get_db()) as db:
@@ -264,7 +264,7 @@ def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
             )
             db.commit()
 
-        return len(persons), emails_gesendet
+        return persons, emails_gesendet
     except Exception as e:
         abgeschlossen = datetime.now().isoformat(timespec="seconds")
         with closing(get_db()) as db:
@@ -487,17 +487,34 @@ def run():
     dry_run = request.form.get("dry_run") == "1"
 
     try:
-        personen, emails = _do_run(dry_run=dry_run)
-        modus = " (DRY-RUN)" if dry_run else ""
-        flash(
-            f"Lauf abgeschlossen{modus}: {personen} Person(en) mit Handlungsbedarf, "
-            f"{emails} E-Mail(s) verarbeitet.",
-            "success",
+        persons, emails = _do_run(dry_run=dry_run)
+
+        rows = []
+        for person in persons:
+            for pruefung in person.pruefungen:
+                rows.append({
+                    "name": f"{person.vorname} {person.nachname}",
+                    "beschreibung": pruefung.beschreibung,
+                    "datum": pruefung.datum,
+                    "status": pruefung.status,
+                })
+        rows.sort(key=lambda r: (0 if r["status"] == "abgelaufen" else 1, r["datum"]))
+
+        abgelaufen_count = sum(1 for p in persons if p.hat_abgelaufene)
+        warnung_count = sum(1 for p in persons if any(pr.status == "warnung" for pr in p.pruefungen))
+
+        return render_template(
+            "ergebnis.html",
+            dry_run=dry_run,
+            personen_count=len(persons),
+            abgelaufen_count=abgelaufen_count,
+            warnung_count=warnung_count,
+            emails_count=emails,
+            rows=rows,
         )
     except Exception as e:
         flash(f"Fehler beim Ausführen: {e}", "error")
-
-    return redirect(url_for("index"))
+        return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
