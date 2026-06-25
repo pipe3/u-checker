@@ -136,6 +136,17 @@
       </div>
     </div>
 
+    <h2>E-Mail an Mitglieder</h2>
+    <div class="field">
+      <label for="email_betreff">Betreff</label>
+      <input type="text" id="email_betreff" name="email_betreff" value="{{ cfg.email_betreff }}" placeholder="Handlungsbedarf: Ablaufende Untersuchungen">
+    </div>
+    <div class="field">
+      <label for="email_template">Mailtext</label>
+      <textarea id="email_template" name="email_template" rows="10" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.email_template }}</textarea>
+      <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code>, <code>{pruefungen_liste}</code></p>
+    </div>
+
     <button type="submit">Einstellungen speichern</button>
   </form>
 

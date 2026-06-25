@@ -15,6 +15,7 @@ from flask import Flask, Response, abort, current_app, flash, redirect, render_t
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
+from u_checker.mailer import DEFAULT_EMAIL_BETREFF as _DEFAULT_EMAIL_BETREFF
 
 logger = logging.getLogger(__name__)
 from u_checker.mailer import send_simple_mail
@@ -27,6 +28,16 @@ app.config.from_mapping(
 
 _initialized_dbs: set = set()
 _scheduler_started = False
+
+_DEFAULT_EMAIL_TEMPLATE = (
+    "Hallo {vorname} {nachname},\n\n"
+    "bei der Prüfung Ihrer Untersuchungsfristen wurden folgende Punkte festgestellt:\n\n"
+    "{pruefungen_liste}\n\n"
+    "Bitte kümmern Sie sich zeitnah um eine Verlängerung bzw. Erneuerung der entsprechenden Untersuchung(en).\n\n"
+    "Bei Fragen wenden Sie sich bitte an den Kommandanten.\n\n"
+    "Mit freundlichen Grüßen\n"
+    "Ihre Feuerwehr Umkirch"
+)
 
 SETTINGS_DEFAULTS = {
     "smtp_host": os.getenv("SMTP_HOST", ""),
@@ -46,6 +57,8 @@ SETTINGS_DEFAULTS = {
     "archiv_tage": "365",
     "script_intervall": "wöchentlich",
     "naechster_lauf": "",
+    "email_betreff": _DEFAULT_EMAIL_BETREFF,
+    "email_template": _DEFAULT_EMAIL_TEMPLATE,
 }
 
 
@@ -247,9 +260,13 @@ def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
         kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
         zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
 
+        email_betreff = cfg.get("email_betreff") or _DEFAULT_EMAIL_BETREFF
+        email_template = cfg.get("email_template") or _DEFAULT_EMAIL_TEMPLATE
+
         persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
         emails_gesendet = send_notifications(
-            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc
+            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc,
+            email_betreff=email_betreff, email_template=email_template,
         )
         send_summary(persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an)
 
@@ -447,8 +464,22 @@ def settings_save():
         "imap_host", "imap_port", "imap_user", "imap_password", "imap_poll_minuten",
         "kommandanten_cc", "zusammenfassung_an",
         "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
+        "email_betreff", "email_template",
     ]
     data = {k: request.form.get(k, "") for k in keys}
+
+    email_template = data.get("email_template", "")
+    if email_template:
+        try:
+            email_template.format(vorname="X", nachname="X", pruefungen_liste="X")
+        except (KeyError, ValueError) as e:
+            flash(
+                f"Ungültiger Platzhalter im E-Mail-Template: {e}. "
+                "Erlaubt sind: {vorname}, {nachname}, {pruefungen_liste}",
+                "error",
+            )
+            return redirect(url_for("settings_page"))
+
     save_settings(data)
 
     from web import scheduler

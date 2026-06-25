@@ -173,3 +173,129 @@ def test_run_nutzt_warn_days_aus_db(client, tmp_path):
 
     assert captured_kwargs.get("warn_days") == 120
     assert captured_kwargs.get("pruefungstypen") == ["G25", "G26"]
+
+
+# --- E-Mail-Template (Issue #16) ---
+
+def test_settings_zeigt_email_betreff_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="email_betreff"' in html
+
+
+def test_settings_zeigt_email_template_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="email_template"' in html
+
+
+def test_settings_zeigt_platzhalter_hinweis(client):
+    html = client.get("/settings").data.decode()
+    assert "{vorname}" in html
+    assert "{nachname}" in html
+    assert "{pruefungen_liste}" in html
+
+
+def test_settings_speichert_email_betreff(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Mein Betreff Test",
+        "email_template": "Hallo {vorname}, bitte handeln.",
+    })
+    import sqlite3
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings").fetchall()}
+    db.close()
+    assert rows["email_betreff"] == "Mein Betreff Test"
+    assert rows["email_template"] == "Hallo {vorname}, bitte handeln."
+
+
+def test_settings_email_felder_nach_reload(client):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Individueller Betreff",
+        "email_template": "Lieber {vorname} {nachname}, {pruefungen_liste}",
+    })
+    html = client.get("/settings").data.decode()
+    assert "Individueller Betreff" in html
+    assert "Lieber {vorname}" in html
+
+
+def test_settings_email_standardwerte_ohne_db(client):
+    html = client.get("/settings").data.decode()
+    assert "Handlungsbedarf" in html
+
+
+def test_settings_ungueltige_platzhalter_werden_abgelehnt(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Betreff",
+        "email_template": "Hallo {vorname}, Kosten: {15,00 EUR}",
+    }, follow_redirects=True)
+    html = response.data.decode()
+    assert "Platzhalter" in html or "Template" in html or "error" in html.lower()
+
+
+def test_settings_unbekannter_platzhalter_wird_abgelehnt(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Betreff",
+        "email_template": "Hallo {vorname}, {unbekannt}!",
+    }, follow_redirects=True)
+    html = response.data.decode()
+    assert "Platzhalter" in html or "error" in html.lower()
+
+
+def test_settings_gueltiges_template_wird_gespeichert(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Betreff",
+        "email_template": "Hallo {vorname} {nachname},\n{pruefungen_liste}",
+    }, follow_redirects=True)
+    assert b"gespeichert" in response.data
+
+
+def test_run_nutzt_email_template_aus_db(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "Test-Betreff",
+        "email_template": "Test-Template {vorname}",
+    })
+
+    xls_path = tmp_path / "latest.xls"
+    xls_path.write_bytes(b"dummy")
+
+    captured_kwargs = {}
+
+    def mock_check(filepath, **kwargs):
+        captured_kwargs.update(kwargs)
+        return []
+
+    def mock_send(persons, **kwargs):
+        captured_kwargs.update(kwargs)
+        return 0
+
+    with patch("web.app.check_examinations", side_effect=mock_check), \
+         patch("web.app.send_notifications", side_effect=mock_send), \
+         patch("web.app.send_summary"):
+        client.post("/run", data={})
+
+    assert captured_kwargs.get("email_betreff") == "Test-Betreff"
+    assert captured_kwargs.get("email_template") == "Test-Template {vorname}"

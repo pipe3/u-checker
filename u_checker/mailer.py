@@ -19,6 +19,8 @@ ZUSAMMENFASSUNG_AN = [e.strip() for e in os.getenv("ZUSAMMENFASSUNG_AN", "").spl
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "email.txt"
 ZUSAMMENFASSUNG_TEMPLATE_PATH = Path(__file__).parent / "templates" / "zusammenfassung.txt"
 
+DEFAULT_EMAIL_BETREFF = "Handlungsbedarf: Ablaufende Untersuchungen"
+
 
 def _load_template() -> str:
     return TEMPLATE_PATH.read_text(encoding="utf-8")
@@ -30,7 +32,7 @@ def _format_pruefung(p) -> str:
     return f"  - {p.beschreibung}: fällig am {datum_str} {status_str}"
 
 
-def _build_message(person: Person, template: str, kommandanten_cc: list) -> dict:
+def _build_message(person: Person, template: str, kommandanten_cc: list, betreff: str) -> dict:
     pruefungen_liste = "\n".join(_format_pruefung(p) for p in person.pruefungen)
     body = template.format(
         vorname=person.vorname,
@@ -40,7 +42,7 @@ def _build_message(person: Person, template: str, kommandanten_cc: list) -> dict
     return {
         "to": person.email,
         "cc": kommandanten_cc if person.hat_abgelaufene else [],
-        "subject": "Handlungsbedarf: Ablaufende Untersuchungen",
+        "subject": betreff,
         "body": body,
     }
 
@@ -148,6 +150,8 @@ def send_notifications(
     dry_run: bool = False,
     smtp_config: Optional[dict] = None,
     kommandanten_cc: Optional[List[str]] = None,
+    email_betreff: Optional[str] = None,
+    email_template: Optional[str] = None,
 ) -> int:
     if not persons:
         print("Keine Personen mit Handlungsbedarf gefunden.")
@@ -155,10 +159,11 @@ def send_notifications(
 
     effective_smtp = smtp_config or {}
     effective_cc = kommandanten_cc if kommandanten_cc is not None else KOMMANDANTEN_CC
-    template = _load_template()
+    template = email_template if email_template is not None else _load_template()
+    betreff = email_betreff if email_betreff is not None else DEFAULT_EMAIL_BETREFF
 
     for person in persons:
-        msg = _build_message(person, template, effective_cc)
+        msg = _build_message(person, template, effective_cc, betreff)
 
         if dry_run:
             print("\n" + "=" * 60)
