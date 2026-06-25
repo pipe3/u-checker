@@ -5,9 +5,9 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ~/u-checker-data:/data
+      - ${HOME}/u-checker/data:/data
     env_file:
-      - ~/u-checker.env
+      - ${HOME}/u-checker/u-checker.env
     environment:
       DATA_DIR: /data
     restart: unless-stopped
