@@ -3,18 +3,11 @@
     "allow": [
       "Bash(gh api *)",
       "Bash(gh auth *)",
-      "Bash(ls ~/.claude/commands/ 2>/dev/null && ls PROJECT_DIR/.claude/commands/ 2>/dev/null)",
-      "Read(/CLAUDE_DIR/commands/**)",
-      "Bash(find HOME_DIR -name \"to-prd.md\" 2>/dev/null | head -5)",
-      "Read(/HOME_DIR/**)",
       "Bash(gh label *)",
       "Bash(gh issue *)",
       "Bash(gh repo *)",
       "Bash(python -m pytest *)",
       "Bash(git add *)"
-    ],
-    "additionalDirectories": [
-      "CLAUDE_DIR/commands"
     ]
   }
 }
