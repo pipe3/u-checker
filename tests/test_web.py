@@ -391,3 +391,44 @@ def test_manueller_run_route_nicht_blockiert(client, tmp_path):
 
     assert response.status_code == 200
     mock_check.assert_called_once()
+
+
+# --- XLS löschen: Issue #12 ---
+
+def test_loeschen_entfernt_xls_und_name_datei(client, tmp_path):
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    (tmp_path / "latest_name.txt").write_text("export.xls", encoding="utf-8")
+
+    response = client.post("/upload/loeschen", follow_redirects=True)
+
+    assert response.status_code == 200
+    assert not (tmp_path / "latest.xls").exists()
+    assert not (tmp_path / "latest_name.txt").exists()
+
+
+def test_loeschen_zeigt_flash_meldung(client, tmp_path):
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+
+    response = client.post("/upload/loeschen", follow_redirects=True)
+
+    assert b"gel\xc3\xb6scht" in response.data
+
+
+def test_loeschen_ohne_datei_gibt_kein_fehler(client):
+    response = client.post("/upload/loeschen", follow_redirects=True)
+    assert response.status_code == 200
+    assert b"gel\xc3\xb6scht" not in response.data
+
+
+def test_loeschen_schaltflaeche_sichtbar_wenn_xls_vorhanden(client, tmp_path):
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    (tmp_path / "latest_name.txt").write_text("export.xls", encoding="utf-8")
+
+    response = client.get("/")
+    assert b"loeschen" in response.data or b"l\xc3\xb6schen" in response.data.lower()
+
+
+def test_loeschen_schaltflaeche_nicht_sichtbar_ohne_xls(client):
+    response = client.get("/")
+    body = response.data.decode("utf-8")
+    assert "/upload/loeschen" not in body

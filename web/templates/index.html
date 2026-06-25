@@ -60,6 +60,9 @@
     </form>
     {% if xls_vorhanden %}
     <p class="meta">Aktuelle Datei: <strong>{{ xls_dateiname or "latest.xls" }}</strong></p>
+    <form action="/upload/loeschen" method="post" style="display:inline">
+      <button type="submit">XLS löschen</button>
+    </form>
     {% else %}
     <p class="meta">Noch keine Datei hochgeladen.</p>
     {% endif %}

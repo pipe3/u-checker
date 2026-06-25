@@ -423,6 +423,17 @@ def upload():
     return redirect(url_for("index"))
 
 
+@app.route("/upload/loeschen", methods=["POST"])
+def upload_loeschen():
+    xls = _xls_path()
+    existed = xls.exists()
+    xls.unlink(missing_ok=True)
+    _xls_name_path().unlink(missing_ok=True)
+    if existed:
+        flash("XLS-Datei gelöscht.", "success")
+    return redirect(url_for("index"))
+
+
 @app.route("/settings", methods=["GET"])
 def settings_page():
     cfg = get_settings()
