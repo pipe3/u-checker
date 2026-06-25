@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import sqlite3
@@ -14,6 +15,8 @@ from flask import Flask, Response, abort, current_app, flash, redirect, render_t
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
+
+logger = logging.getLogger(__name__)
 from u_checker.mailer import send_simple_mail
 
 app = Flask(__name__)
@@ -215,7 +218,10 @@ def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
                     (gestartet, gestartet, int(dry_run), f"{offene_count} offene Task(s)"),
                 )
                 db.commit()
-            _send_blockier_benachrichtigung(offene_count, dry_run=dry_run)
+            try:
+                _send_blockier_benachrichtigung(offene_count, dry_run=dry_run)
+            except Exception:
+                logger.exception("Blockier-Benachrichtigung konnte nicht gesendet werden")
             return 0, 0
 
     gestartet = datetime.now().isoformat(timespec="seconds")
