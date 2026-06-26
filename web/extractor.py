@@ -14,11 +14,26 @@ MATCH_THRESHOLD = 0.70
 
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
+    # Versuch 1: pdfminer (funktioniert nur bei PDFs mit Textlayer)
     try:
         from pdfminer.high_level import extract_text
-        return extract_text(io.BytesIO(pdf_bytes)) or ""
+        text = extract_text(io.BytesIO(pdf_bytes)) or ""
+        if text.strip():
+            return text
     except Exception:
-        return ""
+        logger.warning("pdfminer-Extraktion fehlgeschlagen", exc_info=True)
+
+    # Versuch 2: PDF → Bild → OCR (für gescannte PDFs ohne Textlayer)
+    try:
+        from pdf2image import convert_from_bytes
+        import pytesseract
+        pages = convert_from_bytes(pdf_bytes, dpi=200)
+        parts = [pytesseract.image_to_string(page, lang="deu") for page in pages]
+        return "\n".join(p for p in parts if p.strip())
+    except Exception:
+        logger.warning("PDF-OCR-Fallback fehlgeschlagen", exc_info=True)
+
+    return ""
 
 
 def extract_text_from_image(img_bytes: bytes) -> str:
@@ -28,6 +43,7 @@ def extract_text_from_image(img_bytes: bytes) -> str:
         img = Image.open(io.BytesIO(img_bytes))
         return pytesseract.image_to_string(img, lang="deu")
     except Exception:
+        logger.warning("Bild-OCR fehlgeschlagen", exc_info=True)
         return ""
 
 
