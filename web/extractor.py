@@ -30,14 +30,7 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         pages = convert_from_bytes(pdf_bytes, dpi=200)
         parts = []
         for page in pages:
-            try:
-                osd = pytesseract.image_to_osd(page, output_type=pytesseract.Output.DICT)
-                angle = osd.get("rotate", 0)
-                if angle:
-                    page = page.rotate(angle, expand=True)
-            except Exception:
-                pass
-            parts.append(pytesseract.image_to_string(page, lang="deu"))
+            parts.append(_ocr_with_best_rotation(page))
         return "\n".join(p for p in parts if p.strip())
     except Exception:
         logger.warning("PDF-OCR-Fallback fehlgeschlagen", exc_info=True)
@@ -45,19 +38,31 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     return ""
 
 
+def _ocr_with_best_rotation(img) -> str:
+    """Versucht 0° und 180°, gibt den Text mit höherer Tesseract-Konfidenz zurück."""
+    import pytesseract
+    best_text = ""
+    best_conf = -1.0
+    for angle in (0, 180):
+        candidate = img.rotate(angle, expand=True) if angle else img
+        try:
+            data = pytesseract.image_to_data(candidate, lang="deu", output_type=pytesseract.Output.DICT)
+            confs = [c for c in data["conf"] if isinstance(c, (int, float)) and c >= 0]
+            avg_conf = sum(confs) / len(confs) if confs else 0.0
+            if avg_conf > best_conf:
+                best_conf = avg_conf
+                best_text = " ".join(w for w in data["text"] if w.strip())
+        except Exception:
+            pass
+    return best_text
+
+
 def extract_text_from_image(img_bytes: bytes) -> str:
     try:
         import pytesseract
         from PIL import Image
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-        try:
-            osd = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
-            angle = osd.get("rotate", 0)
-            if angle:
-                img = img.rotate(angle, expand=True)
-        except Exception:
-            pass  # OSD schlägt manchmal fehl – dann ohne Rotation weiter
-        return pytesseract.image_to_string(img, lang="deu")
+        return _ocr_with_best_rotation(img)
     except Exception:
         logger.warning("Bild-OCR fehlgeschlagen", exc_info=True)
         return ""
