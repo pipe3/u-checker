@@ -73,8 +73,13 @@ def _send(msg: dict, smtp_config: dict):
         mime["Cc"] = ", ".join(cc)
     mime.attach(MIMEText(msg["body"], "plain", "utf-8"))
 
-    with smtplib.SMTP(host, port, timeout=10) as server:
-        server.starttls()
+    if port == 465:
+        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
+    else:
+        ctx = smtplib.SMTP(host, port, timeout=10)
+    with ctx as server:
+        if port != 465:
+            server.starttls()
         if user and password:
             server.login(user, password)
         server.sendmail(from_addr, to_list + cc, mime.as_string())
