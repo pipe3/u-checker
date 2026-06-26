@@ -461,6 +461,18 @@ def task_erledigt(task_id: int):
     return redirect(url_for("index"))
 
 
+def _task_dateiname(row, suffix: str = "", ext: str = "pdf") -> str:
+    """Baut einen Dateinamen aus Empfangsdatum, Mitglied und Prüfungstyp."""
+    datum = (row["empfangen_am"] or "")[:10]
+    mitglied = re.sub(r"\s+", "-", (row["mitglied_name"] or "unbekannt").strip())
+    typ = row["pruefungstyp"] or "Nachweis"
+    basis = f"{datum}_{mitglied}_{typ}"
+    if suffix:
+        basis += f"_{suffix}"
+    clean = re.sub(r"[^\w\-]", "_", basis.encode("ascii", "ignore").decode())
+    return f"{clean}.{ext}"
+
+
 @app.route("/tasks/<int:task_id>/pdf")
 def task_pdf(task_id: int):
     with closing(get_db()) as db:
@@ -472,9 +484,7 @@ def task_pdf(task_id: int):
 
     from web.pdf_export import email_to_pdf
     pdf_bytes = email_to_pdf(bytes(row["raw_email"]))
-
-    betreff = row["betreff"] or f"nachweis-{task_id}"
-    filename = re.sub(r"[^\w\-]", "_", betreff.encode("ascii", "ignore").decode())[:60] + ".pdf"
+    filename = _task_dateiname(row)
 
     return Response(
         pdf_bytes,
@@ -486,7 +496,7 @@ def task_pdf(task_id: int):
 @app.route("/tasks/<int:task_id>/anhang/<int:index>")
 def task_anhang(task_id: int, index: int):
     with closing(get_db()) as db:
-        row = db.execute("SELECT raw_email FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is None or not row["raw_email"]:
         abort(404)
 
@@ -497,9 +507,30 @@ def task_anhang(task_id: int, index: int):
     if index >= len(parts):
         abort(404)
 
-    ct, filename, payload = parts[index]
-    disposition = f'inline; filename="{filename}"' if filename else "inline"
+    ct, orig_filename, payload = parts[index]
+    ext = orig_filename.rsplit(".", 1)[-1].lower() if "." in orig_filename else ("pdf" if ct == "application/pdf" else "jpg")
+    disposition = f'inline; filename="{orig_filename}"' if orig_filename else "inline"
     return Response(payload, mimetype=ct, headers={"Content-Disposition": disposition})
+
+
+@app.route("/tasks/<int:task_id>/anhang/<int:index>/download")
+def task_anhang_download(task_id: int, index: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None or not row["raw_email"]:
+        abort(404)
+
+    import email as email_lib
+    from web.extractor import _iter_dokument_parts
+    msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
+    parts = list(_iter_dokument_parts(msg))
+    if index >= len(parts):
+        abort(404)
+
+    ct, orig_filename, payload = parts[index]
+    ext = orig_filename.rsplit(".", 1)[-1].lower() if "." in orig_filename else ("pdf" if ct == "application/pdf" else "jpg")
+    filename = _task_dateiname(row, suffix=f"Anhang-{index + 1}", ext=ext)
+    return Response(payload, mimetype=ct, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @app.route("/archiv")

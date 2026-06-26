@@ -102,26 +102,16 @@ def _html_to_text(html: str) -> str:
 
 
 def _collect_attachment_pdfs(msg: Message) -> List[bytes]:
-    """Sammelt PDF- und Bild-Anhänge als PDF-Bytes."""
+    """Sammelt PDF- und Bild-Anhänge als PDF-Bytes (unabhängig von Content-Disposition)."""
+    from web.extractor import _iter_dokument_parts
     pdfs: List[bytes] = []
-    for part in msg.walk():
-        if part.get_content_disposition() != "attachment":
-            continue
-        payload = part.get_payload(decode=True)
-        if not payload:
-            continue
-        ct = part.get_content_type()
-        filename = (part.get_filename() or "").lower()
-
-        if ct == "application/pdf" or filename.endswith(".pdf"):
+    for ct, _filename, payload in _iter_dokument_parts(msg):
+        if ct == "application/pdf":
             pdfs.append(payload)
-        elif ct.startswith("image/") or any(
-            filename.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".tiff", ".bmp", ".gif")
-        ):
+        else:
             converted = _image_to_pdf(payload)
             if converted:
                 pdfs.append(converted)
-
     return pdfs
 
 
