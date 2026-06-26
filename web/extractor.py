@@ -115,33 +115,53 @@ def parse_pruefungstyp(text: str, valid_types: list[str]) -> Optional[str]:
 
 def parse_datum(text: str) -> Optional[date]:
     """
-    Sucht ein Datum im deutschen Format (d.m.yyyy oder dd.mm.yyyy).
+    Sucht das Fälligkeitsdatum im deutschen Format (d.m.yyyy oder dd.mm.yyyy).
 
-    Bevorzugt Datumsangaben nach Schlüsselwörtern wie "Gültig bis" oder
-    "Ablaufdatum", um Weiterleitungsdaten in Email-Headern zu vermeiden.
+    Priorität:
+    1. Datum nach Fälligkeits-Keywords (gültig bis, nächste Untersuchung, …)
+    2. Alle Daten ohne Geburtstags-Kontext, bevorzugt innerhalb plausiblem Bereich
     """
     _DATE_PATTERN = r"(\d{1,2})\.(\d{1,2})\.(\d{4})"
 
-    # Erst: Datum nach Ablauf-Schlüsselwörtern suchen
-    anchored = re.search(
-        r"(?:gültig\s+bis|gueltig\s+bis|ablaufdatum|gültigkeit|validity|valid\s+until)"
-        r"[\s:–-]*" + _DATE_PATTERN,
-        text,
-        re.IGNORECASE,
+    # Stufe 1: Datum nach Fälligkeits-Keywords
+    fälligkeit_pattern = (
+        r"(?:gültig\s+bis|gueltig\s+bis|ablaufdatum|gültigkeit|validity|valid\s+until"
+        r"|nächste\s+untersuchung|naechste\s+untersuchung|nachuntersuchung"
+        r"|nächste\s+vorsorge|wiedervorlage|fällig\s+am|fällig\s+bis)"
+        r"[\s:–\-]*" + _DATE_PATTERN
     )
-    if anchored:
-        try:
-            return date(int(anchored.group(3)), int(anchored.group(2)), int(anchored.group(1)))
-        except ValueError:
-            pass
-
-    # Fallback: erstes Datum im Text
-    m = re.search(r"\b" + _DATE_PATTERN + r"\b", text)
+    m = re.search(fälligkeit_pattern, text, re.IGNORECASE)
     if m:
         try:
             return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
         except ValueError:
             pass
+
+    # Stufe 2: Positionen aller Datumsangaben ermitteln, Geburtstags-Kontext ausschließen
+    geburtstag_pattern = re.compile(
+        r"(?:geb(?:oren|\.)|geburtsdatum|birthdate|date\s+of\s+birth)"
+        r"[\s:]*" + _DATE_PATTERN,
+        re.IGNORECASE,
+    )
+    geburtstag_spans = {m.start() for m in geburtstag_pattern.finditer(text)}
+
+    heute = date.today()
+    kandidaten: list[date] = []
+    for m in re.finditer(r"\b" + _DATE_PATTERN + r"\b", text):
+        if m.start() in geburtstag_spans:
+            continue
+        try:
+            d = date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            continue
+        # Geburtsdaten herausfiltern: mehr als 15 Jahre in der Vergangenheit
+        if (heute - d).days > 15 * 365:
+            continue
+        kandidaten.append(d)
+
+    if kandidaten:
+        # Frühestes Datum bevorzugen (nächste Fälligkeit)
+        return min(kandidaten)
     return None
 
 
