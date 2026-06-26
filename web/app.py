@@ -514,6 +514,24 @@ def settings_save():
     return redirect(url_for("settings_page"))
 
 
+@app.route("/settings/imap-poll", methods=["POST"])
+def settings_imap_poll():
+    from web.imap_poller import poll_inbox
+    cfg = get_settings()
+    if not cfg.get("imap_host", "").strip():
+        flash("Bitte zuerst IMAP-Host in den Einstellungen eintragen.", "error")
+        return redirect(url_for("settings_page"))
+    try:
+        new_count = poll_inbox(app)
+        if new_count > 0:
+            flash(f"{new_count} neue Nachricht(en) abgerufen.", "success")
+        else:
+            flash("Keine neuen Nachrichten im Posteingang.", "success")
+    except Exception as e:
+        flash(f"IMAP-Fehler – {type(e).__name__}: {e}", "error")
+    return redirect(url_for("settings_page"))
+
+
 @app.route("/settings/smtp-test", methods=["POST"])
 def settings_smtp_test():
     cfg = get_settings()
