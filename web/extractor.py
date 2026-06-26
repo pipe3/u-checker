@@ -40,7 +40,7 @@ def extract_text_from_image(img_bytes: bytes) -> str:
     try:
         import pytesseract
         from PIL import Image
-        img = Image.open(io.BytesIO(img_bytes))
+        img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         return pytesseract.image_to_string(img, lang="deu")
     except Exception:
         logger.warning("Bild-OCR fehlgeschlagen", exc_info=True)
