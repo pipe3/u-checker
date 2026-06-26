@@ -530,7 +530,10 @@ def settings_smtp_test():
         )
         flash(f"Test-Mail erfolgreich gesendet an {', '.join(zusammenfassung_an)}.", "success")
     except Exception as e:
-        flash(f"SMTP-Fehler: {e}", "error")
+        smtp_cfg = _build_smtp_config(cfg)
+        host = smtp_cfg.get("host") or "localhost"
+        port = smtp_cfg.get("port") or 587
+        flash(f"SMTP-Fehler ({host}:{port}) – {type(e).__name__}: {e}", "error")
     return redirect(url_for("settings_page"))
 
 

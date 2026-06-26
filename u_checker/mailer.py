@@ -73,7 +73,7 @@ def _send(msg: dict, smtp_config: dict):
         mime["Cc"] = ", ".join(cc)
     mime.attach(MIMEText(msg["body"], "plain", "utf-8"))
 
-    with smtplib.SMTP(host, port) as server:
+    with smtplib.SMTP(host, port, timeout=10) as server:
         server.starttls()
         if user and password:
             server.login(user, password)
