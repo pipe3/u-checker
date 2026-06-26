@@ -142,6 +142,7 @@ def _migrate_tasks(db):
         ("mitglied_name", "TEXT"),
         ("hinweis", "TEXT"),
         ("erledigt_am", "TEXT"),
+        ("raw_text", "TEXT"),
     ]
     for col, coltype in new_cols:
         if col not in existing:
@@ -376,6 +377,58 @@ def task_zuordnen(task_id: int):
         db.commit()
 
     flash(f"Mitglied \"{mitglied_name}\" zugeordnet.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/tasks/<int:task_id>/reanalyse", methods=["POST"])
+def task_reanalyse(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT raw_email FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404)
+        if not row["raw_email"]:
+            flash("Kein gespeichertes E-Mail für Re-Analyse vorhanden.", "error")
+            return redirect(url_for("index"))
+
+        import email as email_lib
+        from web.extractor import extract_from_email, load_members_from_xls
+        cfg = get_settings()
+        members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
+        pruefungstypen_list = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
+
+        msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
+        extraction = extract_from_email(msg, pruefungstypen_list, members)
+
+        pruefungstyp = extraction["pruefungstyp"]
+        faelligkeitsdatum = extraction["faelligkeitsdatum"]
+        raw_text = extraction["raw_text"] or None
+        matched_member = extraction["mitglied"]
+        match_score = extraction["match_score"]
+
+        from web.extractor import MATCH_THRESHOLD as threshold
+
+        if members and match_score < threshold:
+            new_status = "UNKLARE_ZUORDNUNG"
+            mitglied_nr = None
+            mitglied_name = None
+        elif matched_member:
+            new_status = "NEU"
+            mitglied_nr = matched_member["pers_nr"]
+            mitglied_name = f"{matched_member['vorname']} {matched_member['nachname']}"
+        else:
+            new_status = "NEU"
+            mitglied_nr = None
+            mitglied_name = None
+
+        faelligkeitsdatum_str = faelligkeitsdatum.isoformat() if faelligkeitsdatum else None
+        db.execute(
+            """UPDATE tasks SET pruefungstyp = ?, faelligkeitsdatum = ?, raw_text = ?,
+               mitglied_nr = ?, mitglied_name = ?, status = ? WHERE id = ?""",
+            (pruefungstyp, faelligkeitsdatum_str, raw_text, mitglied_nr, mitglied_name, new_status, task_id),
+        )
+        db.commit()
+
+    flash("Re-Analyse abgeschlossen.", "success")
     return redirect(url_for("index"))
 
 

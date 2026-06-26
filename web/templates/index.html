@@ -120,13 +120,19 @@
             <br><span class="hinweis">{{ task["hinweis"] }}</span>
             {% endif %}
           </td>
-          <td style="white-space:nowrap;font-size:0.85rem;">
+          <td style="font-size:0.85rem;">
             {% if task["pruefungstyp"] %}<strong>{{ task["pruefungstyp"] }}</strong>{% else %}–{% endif %}
             {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] }}{% endif %}
+            {% if task["raw_text"] %}
+            <br><details style="margin-top:0.3rem;">
+              <summary style="cursor:pointer;font-size:0.75rem;color:#0d6efd;">OCR-Text</summary>
+              <pre style="font-size:0.72rem;white-space:pre-wrap;background:#f8f9fa;border:1px solid #dee2e6;border-radius:3px;padding:0.4rem;margin:0.3rem 0 0;max-height:200px;overflow-y:auto;">{{ task["raw_text"] }}</pre>
+            </details>
+            {% endif %}
           </td>
           <td style="text-align:center;">{{ task["anhang_count"] }}</td>
           <td class="status-{{ task['status'] }}">{{ task["status"] | replace("_", " ") }}</td>
-          <td>
+          <td style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
             {% if task["status"] == "UNKLARE_ZUORDNUNG" %}
             {% if members %}
             <form action="/tasks/{{ task['id'] }}/zuordnen" method="post" style="margin:0;display:flex;gap:4px;align-items:center;">
@@ -149,6 +155,11 @@
             </form>
             {% elif task["status"] == "ERLEDIGT" and task["raw_email"] %}
             <a href="/tasks/{{ task['id'] }}/pdf" style="display:inline-block;padding:0.2rem 0.6rem;background:#198754;color:#fff;border-radius:4px;text-decoration:none;font-size:0.8rem;">PDF</a>
+            {% endif %}
+            {% if task["raw_email"] %}
+            <form action="/tasks/{{ task['id'] }}/reanalyse" method="post" style="margin:0;">
+              <button type="submit" class="secondary" style="font-size:0.75rem;padding:0.15rem 0.5rem;background:#6c757d;">Re-Analyse</button>
+            </form>
             {% endif %}
           </td>
         </tr>

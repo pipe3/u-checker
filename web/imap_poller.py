@@ -67,15 +67,16 @@ def process_email(
         mitglied_name = None
 
     empfangen_am = datetime.now().isoformat(timespec="seconds")
+    raw_text = extraction["raw_text"] or None
     cursor = db.execute(
         """INSERT INTO tasks
                (status, empfangen_am, von_email, von_name, betreff, message_id, raw_email,
-                anhang_count, pruefungstyp, faelligkeitsdatum, mitglied_nr, mitglied_name)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                anhang_count, pruefungstyp, faelligkeitsdatum, mitglied_nr, mitglied_name, raw_text)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             status, empfangen_am, von_email or None, von_name or None, betreff or None,
             dedup_key, raw_bytes, anhang_count,
-            pruefungstyp, faelligkeitsdatum_str, mitglied_nr, mitglied_name,
+            pruefungstyp, faelligkeitsdatum_str, mitglied_nr, mitglied_name, raw_text,
         ),
     )
     task_id = cursor.lastrowid
