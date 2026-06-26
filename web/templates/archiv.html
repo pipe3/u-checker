@@ -66,7 +66,7 @@
           <td>{{ task["betreff"] or "–" }}</td>
           <td style="white-space:nowrap;font-size:0.85rem;">
             {% if task["pruefungstyp"] %}<strong>{{ task["pruefungstyp"] }}</strong>{% else %}–{% endif %}
-            {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] }}{% endif %}
+            {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] | datum_de }}{% endif %}
           </td>
           <td>
             {% if task["raw_email"] %}

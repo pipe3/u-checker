@@ -28,6 +28,18 @@ app.config.from_mapping(
     DATA_DIR=Path(os.getenv("DATA_DIR", "/data")),
 )
 
+@app.template_filter("datum_de")
+def datum_de(value: str) -> str:
+    """Wandelt ISO-Datum (yyyy-mm-dd) in deutsches Format (dd.mm.yyyy) um."""
+    if not value:
+        return value
+    try:
+        y, m, d = value[:10].split("-")
+        return f"{d}.{m}.{y}"
+    except Exception:
+        return value
+
+
 _initialized_dbs: set = set()
 _scheduler_started = False
 
