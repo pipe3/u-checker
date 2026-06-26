@@ -121,6 +121,8 @@ def _image_to_pdf(img_bytes: bytes) -> Optional[bytes]:
         from PIL import Image
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import mm
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfgen.canvas import Canvas
 
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
         page_w, page_h = A4
@@ -132,16 +134,15 @@ def _image_to_pdf(img_bytes: bytes) -> Optional[bytes]:
         new_w = img.width * ratio
         new_h = img.height * ratio
 
-        buf = io.BytesIO()
-        from reportlab.pdfgen.canvas import Canvas
-        c = Canvas(buf, pagesize=A4)
-        x = (page_w - new_w) / 2
-        y = (page_h - new_h) / 2
-
         img_buf = io.BytesIO()
         img.save(img_buf, format="JPEG")
         img_buf.seek(0)
-        c.drawImage(img_buf, x, y, width=new_w, height=new_h)
+
+        buf = io.BytesIO()
+        c = Canvas(buf, pagesize=A4)
+        x = (page_w - new_w) / 2
+        y = (page_h - new_h) / 2
+        c.drawImage(ImageReader(img_buf), x, y, width=new_w, height=new_h)
         c.save()
         return buf.getvalue()
     except Exception:
