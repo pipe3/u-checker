@@ -28,7 +28,16 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
         from pdf2image import convert_from_bytes
         import pytesseract
         pages = convert_from_bytes(pdf_bytes, dpi=200)
-        parts = [pytesseract.image_to_string(page, lang="deu") for page in pages]
+        parts = []
+        for page in pages:
+            try:
+                osd = pytesseract.image_to_osd(page, output_type=pytesseract.Output.DICT)
+                angle = osd.get("rotate", 0)
+                if angle:
+                    page = page.rotate(angle, expand=True)
+            except Exception:
+                pass
+            parts.append(pytesseract.image_to_string(page, lang="deu"))
         return "\n".join(p for p in parts if p.strip())
     except Exception:
         logger.warning("PDF-OCR-Fallback fehlgeschlagen", exc_info=True)
@@ -41,6 +50,13 @@ def extract_text_from_image(img_bytes: bytes) -> str:
         import pytesseract
         from PIL import Image
         img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        try:
+            osd = pytesseract.image_to_osd(img, output_type=pytesseract.Output.DICT)
+            angle = osd.get("rotate", 0)
+            if angle:
+                img = img.rotate(angle, expand=True)
+        except Exception:
+            pass  # OSD schlägt manchmal fehl – dann ohne Rotation weiter
         return pytesseract.image_to_string(img, lang="deu")
     except Exception:
         logger.warning("Bild-OCR fehlgeschlagen", exc_info=True)
