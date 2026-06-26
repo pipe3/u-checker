@@ -16,6 +16,8 @@ from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
 from u_checker.mailer import DEFAULT_EMAIL_BETREFF as _DEFAULT_EMAIL_BETREFF
+from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_BETREFF as _DEFAULT_ZUSAMMENFASSUNG_BETREFF
+from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_TEMPLATE as _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
 
 logger = logging.getLogger(__name__)
 from u_checker.mailer import send_simple_mail
@@ -59,6 +61,8 @@ SETTINGS_DEFAULTS = {
     "naechster_lauf": "",
     "email_betreff": _DEFAULT_EMAIL_BETREFF,
     "email_template": _DEFAULT_EMAIL_TEMPLATE,
+    "zusammenfassung_betreff": _DEFAULT_ZUSAMMENFASSUNG_BETREFF,
+    "zusammenfassung_template": _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE,
 }
 
 
@@ -262,13 +266,18 @@ def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
 
         email_betreff = cfg.get("email_betreff") or _DEFAULT_EMAIL_BETREFF
         email_template = cfg.get("email_template") or _DEFAULT_EMAIL_TEMPLATE
+        zusammenfassung_betreff = cfg.get("zusammenfassung_betreff") or _DEFAULT_ZUSAMMENFASSUNG_BETREFF
+        zusammenfassung_template = cfg.get("zusammenfassung_template") or _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
 
         persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
         emails_gesendet = send_notifications(
             persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc,
             email_betreff=email_betreff, email_template=email_template,
         )
-        send_summary(persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an)
+        send_summary(
+            persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an,
+            zusammenfassung_betreff=zusammenfassung_betreff, zusammenfassung_template=zusammenfassung_template,
+        )
 
         abgeschlossen = datetime.now().isoformat(timespec="seconds")
         with closing(get_db()) as db:
@@ -465,6 +474,7 @@ def settings_save():
         "kommandanten_cc", "zusammenfassung_an",
         "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
         "email_betreff", "email_template",
+        "zusammenfassung_betreff", "zusammenfassung_template",
     ]
     data = {k: request.form.get(k, "") for k in keys}
 
@@ -472,10 +482,25 @@ def settings_save():
     if email_template:
         try:
             email_template.format(vorname="X", nachname="X", pruefungen_liste="X")
-        except (KeyError, ValueError) as e:
+        except (KeyError, ValueError, IndexError) as e:
             flash(
                 f"Ungültiger Platzhalter im E-Mail-Template: {e}. "
                 "Erlaubt sind: {vorname}, {nachname}, {pruefungen_liste}",
+                "error",
+            )
+            return redirect(url_for("settings_page"))
+
+    zusammenfassung_template = data.get("zusammenfassung_template", "")
+    if zusammenfassung_template:
+        try:
+            zusammenfassung_template.format(
+                datum="X", zusammenfassung="X",
+                anzahl_personen=0, anzahl_abgelaufen=0, anzahl_warnung=0,
+            )
+        except (KeyError, ValueError, IndexError) as e:
+            flash(
+                f"Ungültiger Platzhalter im Zusammenfassungs-Template: {e}. "
+                "Erlaubt sind: {datum}, {zusammenfassung}, {anzahl_personen}, {anzahl_abgelaufen}, {anzahl_warnung}",
                 "error",
             )
             return redirect(url_for("settings_page"))

@@ -17,9 +17,16 @@ KOMMANDANTEN_CC = [e.strip() for e in os.getenv("KOMMANDANTEN_CC", "").split(","
 ZUSAMMENFASSUNG_AN = [e.strip() for e in os.getenv("ZUSAMMENFASSUNG_AN", "").split(",") if e.strip()]
 
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "email.txt"
-ZUSAMMENFASSUNG_TEMPLATE_PATH = Path(__file__).parent / "templates" / "zusammenfassung.txt"
 
 DEFAULT_EMAIL_BETREFF = "Handlungsbedarf: Ablaufende Untersuchungen"
+DEFAULT_ZUSAMMENFASSUNG_BETREFF = "Übersicht ablaufende Untersuchungen"
+DEFAULT_ZUSAMMENFASSUNG_TEMPLATE = (
+    "Übersicht ablaufende Untersuchungen – Stand {datum}\n\n"
+    "{zusammenfassung}\n\n"
+    "---\n"
+    "Gesamt: {anzahl_personen} Person(en) mit Handlungsbedarf "
+    "({anzahl_abgelaufen} abgelaufen, {anzahl_warnung} Warnung)"
+)
 
 
 def _load_template() -> str:
@@ -73,8 +80,14 @@ def _send(msg: dict, smtp_config: dict):
         server.sendmail(from_addr, to_list + cc, mime.as_string())
 
 
-def _build_zusammenfassung(persons: List[Person], zusammenfassung_an: list) -> dict:
-    template = ZUSAMMENFASSUNG_TEMPLATE_PATH.read_text(encoding="utf-8")
+def _build_zusammenfassung(
+    persons: List[Person],
+    zusammenfassung_an: list,
+    template: Optional[str] = None,
+    betreff: Optional[str] = None,
+) -> dict:
+    effective_template = template if template is not None else DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
+    effective_betreff = betreff if betreff is not None else DEFAULT_ZUSAMMENFASSUNG_BETREFF
     heute = date.today()
 
     eintraege = []
@@ -99,7 +112,7 @@ def _build_zusammenfassung(persons: List[Person], zusammenfassung_an: list) -> d
             tage = (pr.datum - heute).days
             zeilen.append(f"  - {person.nachname}, {person.vorname}: {pr.beschreibung} – {pr.datum.strftime('%d.%m.%Y')} (in {tage} Tagen)")
 
-    body = template.format(
+    body = effective_template.format(
         datum=heute.strftime("%d.%m.%Y"),
         zusammenfassung="\n".join(zeilen),
         anzahl_personen=len(persons),
@@ -108,7 +121,7 @@ def _build_zusammenfassung(persons: List[Person], zusammenfassung_an: list) -> d
     )
     return {
         "to": zusammenfassung_an,
-        "subject": f"Übersicht ablaufende Untersuchungen – {heute.strftime('%d.%m.%Y')}",
+        "subject": effective_betreff,
         "body": body,
     }
 
@@ -125,13 +138,20 @@ def send_summary(
     dry_run: bool = False,
     smtp_config: Optional[dict] = None,
     zusammenfassung_an: Optional[List[str]] = None,
+    zusammenfassung_betreff: Optional[str] = None,
+    zusammenfassung_template: Optional[str] = None,
 ):
     effective_zusammenfassung_an = zusammenfassung_an if zusammenfassung_an is not None else ZUSAMMENFASSUNG_AN
     if not effective_zusammenfassung_an:
         return
 
     effective_smtp = smtp_config or {}
-    msg = _build_zusammenfassung(persons, effective_zusammenfassung_an)
+    msg = _build_zusammenfassung(
+        persons,
+        effective_zusammenfassung_an,
+        template=zusammenfassung_template,
+        betreff=zusammenfassung_betreff,
+    )
 
     if dry_run:
         print("\n" + "=" * 60)

@@ -147,6 +147,17 @@
       <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code>, <code>{pruefungen_liste}</code></p>
     </div>
 
+    <h2>Zusammenfassungs-Mail</h2>
+    <div class="field">
+      <label for="zusammenfassung_betreff">Betreff</label>
+      <input type="text" id="zusammenfassung_betreff" name="zusammenfassung_betreff" value="{{ cfg.zusammenfassung_betreff }}" placeholder="Übersicht ablaufende Untersuchungen">
+    </div>
+    <div class="field">
+      <label for="zusammenfassung_template">Mailtext</label>
+      <textarea id="zusammenfassung_template" name="zusammenfassung_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.zusammenfassung_template }}</textarea>
+      <p class="hint">Verfügbare Platzhalter: <code>{datum}</code>, <code>{zusammenfassung}</code>, <code>{anzahl_personen}</code>, <code>{anzahl_abgelaufen}</code>, <code>{anzahl_warnung}</code></p>
+    </div>
+
     <button type="submit">Einstellungen speichern</button>
   </form>
 

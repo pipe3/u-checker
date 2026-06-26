@@ -269,6 +269,93 @@ def test_settings_gueltiges_template_wird_gespeichert(client):
     assert b"gespeichert" in response.data
 
 
+# --- Zusammenfassungs-Mail-Template (Issue #17) ---
+
+def test_settings_zeigt_zusammenfassung_betreff_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="zusammenfassung_betreff"' in html
+
+
+def test_settings_zeigt_zusammenfassung_template_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="zusammenfassung_template"' in html
+
+
+def test_settings_zeigt_zusammenfassung_platzhalter_hinweis(client):
+    html = client.get("/settings").data.decode()
+    assert "{datum}" in html
+    assert "{zusammenfassung}" in html
+    assert "{anzahl_personen}" in html
+    assert "{anzahl_abgelaufen}" in html
+    assert "{anzahl_warnung}" in html
+
+
+def test_settings_speichert_zusammenfassung_betreff(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "Mein Zusammenfassungs-Betreff",
+        "zusammenfassung_template": "Stand {datum}\n{zusammenfassung}\n{anzahl_personen} {anzahl_abgelaufen} {anzahl_warnung}",
+    })
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings").fetchall()}
+    db.close()
+    assert rows["zusammenfassung_betreff"] == "Mein Zusammenfassungs-Betreff"
+    assert "Stand {datum}" in rows["zusammenfassung_template"]
+
+
+def test_settings_zusammenfassung_felder_nach_reload(client):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "Gespeicherter Betreff",
+        "zusammenfassung_template": "Liebe Kommandanten, {datum}",
+    })
+    html = client.get("/settings").data.decode()
+    assert "Gespeicherter Betreff" in html
+    assert "Liebe Kommandanten" in html
+
+
+def test_settings_zusammenfassung_standardwerte_ohne_db(client):
+    html = client.get("/settings").data.decode()
+    assert "Übersicht" in html
+
+
+def test_run_nutzt_zusammenfassung_template_aus_db(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "Test-Zusammenfassung-Betreff",
+        "zusammenfassung_template": "Test {datum} {zusammenfassung} {anzahl_personen} {anzahl_abgelaufen} {anzahl_warnung}",
+    })
+
+    xls_path = tmp_path / "latest.xls"
+    xls_path.write_bytes(b"dummy")
+
+    captured_kwargs = {}
+
+    def mock_summary(persons, **kwargs):
+        captured_kwargs.update(kwargs)
+
+    with patch("web.app.check_examinations", return_value=[]), \
+         patch("web.app.send_notifications", return_value=0), \
+         patch("web.app.send_summary", side_effect=mock_summary):
+        client.post("/run", data={})
+
+    assert captured_kwargs.get("zusammenfassung_betreff") == "Test-Zusammenfassung-Betreff"
+    assert "Test {datum}" in captured_kwargs.get("zusammenfassung_template", "")
+
+
 def test_run_nutzt_email_template_aus_db(client, tmp_path):
     client.post("/settings", data={
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
