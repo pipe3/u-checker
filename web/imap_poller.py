@@ -11,7 +11,7 @@ from contextlib import closing
 from datetime import datetime
 from email.mime.text import MIMEText
 
-from web.extractor import MATCH_THRESHOLD, extract_from_email, load_members_from_xls
+from web.extractor import MATCH_THRESHOLD, extract_from_email, load_members_from_xls, _iter_dokument_parts
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +37,7 @@ def process_email(
     von_name, von_email = email.utils.parseaddr(from_raw)
     betreff = _decode_header_value(msg.get("Subject", ""))
 
-    anhang_count = sum(
-        1 for part in msg.walk()
-        if part.get_content_disposition() == "attachment"
-    )
+    anhang_count = sum(1 for _ in _iter_dokument_parts(msg))
 
     members = load_members_from_xls(xls_path) if xls_path else []
     valid_types = pruefungstypen or ["G25"]

@@ -403,13 +403,14 @@ def task_reanalyse(task_id: int):
             return redirect(url_for("index"))
 
         import email as email_lib
-        from web.extractor import extract_from_email, load_members_from_xls
+        from web.extractor import extract_from_email, load_members_from_xls, _iter_dokument_parts
         cfg = get_settings()
         members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
         pruefungstypen_list = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
 
         msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
         extraction = extract_from_email(msg, pruefungstypen_list, members)
+        anhang_count = sum(1 for _ in _iter_dokument_parts(msg))
 
         pruefungstyp = extraction["pruefungstyp"]
         faelligkeitsdatum = extraction["faelligkeitsdatum"]
@@ -435,8 +436,8 @@ def task_reanalyse(task_id: int):
         faelligkeitsdatum_str = faelligkeitsdatum.isoformat() if faelligkeitsdatum else None
         db.execute(
             """UPDATE tasks SET pruefungstyp = ?, faelligkeitsdatum = ?, raw_text = ?,
-               mitglied_nr = ?, mitglied_name = ?, status = ? WHERE id = ?""",
-            (pruefungstyp, faelligkeitsdatum_str, raw_text, mitglied_nr, mitglied_name, new_status, task_id),
+               mitglied_nr = ?, mitglied_name = ?, status = ?, anhang_count = ? WHERE id = ?""",
+            (pruefungstyp, faelligkeitsdatum_str, raw_text, mitglied_nr, mitglied_name, new_status, anhang_count, task_id),
         )
         db.commit()
 
@@ -480,6 +481,25 @@ def task_pdf(task_id: int):
         mimetype="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.route("/tasks/<int:task_id>/anhang/<int:index>")
+def task_anhang(task_id: int, index: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT raw_email FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None or not row["raw_email"]:
+        abort(404)
+
+    import email as email_lib
+    from web.extractor import _iter_dokument_parts
+    msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
+    parts = list(_iter_dokument_parts(msg))
+    if index >= len(parts):
+        abort(404)
+
+    ct, filename, payload = parts[index]
+    disposition = f'inline; filename="{filename}"' if filename else "inline"
+    return Response(payload, mimetype=ct, headers={"Content-Disposition": disposition})
 
 
 @app.route("/archiv")

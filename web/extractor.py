@@ -68,29 +68,39 @@ def extract_text_from_image(img_bytes: bytes) -> str:
         return ""
 
 
+def _iter_dokument_parts(msg):
+    """Liefert alle PDF- und Bild-Teile einer Email als (content_type, filename, payload)-Tupel."""
+    for part in msg.walk():
+        ct = part.get_content_type()
+        filename = part.get_filename() or ""
+        fname_lower = filename.lower()
+        if ct == "application/pdf" or fname_lower.endswith(".pdf"):
+            payload = part.get_payload(decode=True)
+            if payload:
+                yield ct if ct == "application/pdf" else "application/pdf", filename, payload
+        elif ct.startswith("image/") or any(
+            fname_lower.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".tiff", ".bmp")
+        ):
+            payload = part.get_payload(decode=True)
+            if payload:
+                yield ct, filename, payload
+
+
 def collect_text_from_email(msg) -> str:
     """Sammelt Text aus Body und Anhängen (PDF + Bild) einer Email."""
     parts: list[str] = []
     for part in msg.walk():
         ct = part.get_content_type()
         disp = part.get_content_disposition()
-        filename = (part.get_filename() or "").lower()
-
         if ct == "text/plain" and disp != "attachment":
             payload = part.get_payload(decode=True)
             if payload:
                 parts.append(payload.decode("utf-8", errors="replace"))
-        elif ct == "application/pdf" or filename.endswith(".pdf"):
-            payload = part.get_payload(decode=True)
-            if payload:
-                parts.append(extract_text_from_pdf(payload))
-        elif ct.startswith("image/") or any(
-            filename.endswith(ext) for ext in (".jpg", ".jpeg", ".png", ".tiff", ".bmp")
-        ):
-            payload = part.get_payload(decode=True)
-            if payload:
-                parts.append(extract_text_from_image(payload))
-
+    for ct, _filename, payload in _iter_dokument_parts(msg):
+        if ct == "application/pdf":
+            parts.append(extract_text_from_pdf(payload))
+        else:
+            parts.append(extract_text_from_image(payload))
     return "\n".join(p for p in parts if p)
 
 

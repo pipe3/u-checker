@@ -130,7 +130,16 @@
             </details>
             {% endif %}
           </td>
-          <td style="text-align:center;">{{ task["anhang_count"] }}</td>
+          <td style="text-align:center;">
+            {{ task["anhang_count"] }}
+            {% if task["anhang_count"] and task["anhang_count"] > 0 %}
+            <br>
+            {% for i in range(task["anhang_count"]) %}
+            <a href="#" onclick="zeigeAnhang('/tasks/{{ task['id'] }}/anhang/{{ i }}'); return false;"
+               style="font-size:0.75rem;color:#0d6efd;display:block;">Anhang {{ i + 1 }}</a>
+            {% endfor %}
+            {% endif %}
+          </td>
           <td class="status-{{ task['status'] }}">{{ task["status"] | replace("_", " ") }}</td>
           <td style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
             {% if task["status"] == "UNKLARE_ZUORDNUNG" %}
@@ -209,5 +218,26 @@
     <p class="empty">Noch keine Läufe.</p>
     {% endif %}
   </section>
+  <!-- Anhang-Vorschau Modal -->
+  <div id="anhang-modal" onclick="if(event.target===this)schliesseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:#fff;border-radius:6px;width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;">
+      <div style="display:flex;justify-content:flex-end;padding:0.4rem 0.6rem;border-bottom:1px solid #ddd;">
+        <button onclick="schliesseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#555;padding:0 0.4rem;">&times;</button>
+      </div>
+      <iframe id="anhang-frame" src="" style="flex:1;border:none;width:100%;"></iframe>
+    </div>
+  </div>
+  <script>
+    function zeigeAnhang(url) {
+      document.getElementById('anhang-frame').src = url;
+      const m = document.getElementById('anhang-modal');
+      m.style.display = 'flex';
+    }
+    function schliesseModal() {
+      document.getElementById('anhang-modal').style.display = 'none';
+      document.getElementById('anhang-frame').src = '';
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') schliesseModal(); });
+  </script>
 </body>
 </html>
