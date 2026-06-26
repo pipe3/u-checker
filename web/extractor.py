@@ -95,10 +95,21 @@ def collect_text_from_email(msg) -> str:
 
 
 def parse_pruefungstyp(text: str, valid_types: list[str]) -> Optional[str]:
-    """Sucht den ersten bekannten Prüfungstyp (Wortgrenze) im Text."""
+    """Sucht den ersten bekannten Prüfungstyp (Wortgrenze) im Text.
+
+    Berücksichtigt typische OCR-Fehllesarten: G→6 (z.B. G26→626).
+    """
+    def patterns_for(typ: str) -> list[str]:
+        p = [re.escape(typ)]
+        # G25 → 625, G26 → 626 etc.
+        if re.match(r"^G\d", typ, re.IGNORECASE):
+            p.append(re.escape("6" + typ[1:]))
+        return p
+
     for typ in valid_types:
-        if re.search(r"\b" + re.escape(typ) + r"\b", text, re.IGNORECASE):
-            return typ.upper()
+        for pat in patterns_for(typ):
+            if re.search(r"\b" + pat + r"\b", text, re.IGNORECASE):
+                return typ.upper()
     return None
 
 
