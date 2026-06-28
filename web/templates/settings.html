@@ -35,7 +35,11 @@
 </head>
 <body>
   <h1>Einstellungen</h1>
-  <nav><a href="/">← Zurück zur Übersicht</a></nav>
+  <nav style="display:flex;gap:1.2rem;align-items:center;margin-bottom:1.5rem;font-size:0.9rem;">
+    <a href="/">← Zurück zur Übersicht</a>
+    <a href="/archiv">Archiv</a>
+    <a href="/email-pruefung">E-Mail-Prüfung</a>
+  </nav>
 
   {% for category, message in get_flashed_messages(with_categories=true) %}
   <div class="flash {{ category }}">{{ message }}</div>

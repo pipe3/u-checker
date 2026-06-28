@@ -18,6 +18,7 @@ from u_checker import check_examinations, send_notifications, send_summary
 from u_checker.mailer import DEFAULT_EMAIL_BETREFF as _DEFAULT_EMAIL_BETREFF
 from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_BETREFF as _DEFAULT_ZUSAMMENFASSUNG_BETREFF
 from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_TEMPLATE as _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
+from web.extractor import load_members_from_xls
 
 logger = logging.getLogger(__name__)
 from u_checker.mailer import send_simple_mail
@@ -140,7 +141,41 @@ def init_db():
                 hinweis TEXT
             )
         """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS email_verifikation (
+                pers_nr TEXT PRIMARY KEY,
+                vorname TEXT NOT NULL,
+                nachname TEXT NOT NULL,
+                email TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'nie_geprueft',
+                gesendet_am TEXT,
+                bestaetigt_am TEXT,
+                adresse_geaendert INTEGER NOT NULL DEFAULT 0,
+                verifikationsmail_message_id TEXT
+            )
+        """)
         _migrate_tasks(db)
+        db.commit()
+
+
+def _sync_email_verifikation(members: list) -> None:
+    """Synchronisiert aktive Mitglieder in email_verifikation."""
+    with closing(get_db()) as db:
+        for m in members:
+            existing = db.execute(
+                "SELECT email FROM email_verifikation WHERE pers_nr = ?",
+                (m["pers_nr"],),
+            ).fetchone()
+            if existing is None:
+                db.execute(
+                    "INSERT INTO email_verifikation (pers_nr, vorname, nachname, email) VALUES (?, ?, ?, ?)",
+                    (m["pers_nr"], m["vorname"], m["nachname"], m["email"]),
+                )
+            elif existing["email"] != m["email"]:
+                db.execute(
+                    "UPDATE email_verifikation SET vorname=?, nachname=?, email=?, adresse_geaendert=1 WHERE pers_nr=?",
+                    (m["vorname"], m["nachname"], m["email"], m["pers_nr"]),
+                )
         db.commit()
 
 
@@ -345,7 +380,6 @@ def index():
 
     members = []
     if xls_vorhanden and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
-        from web.extractor import load_members_from_xls
         members = load_members_from_xls(str(_xls_path()))
 
     cfg = get_settings()
@@ -533,6 +567,36 @@ def task_anhang_download(task_id: int, index: int):
     return Response(payload, mimetype=ct, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
+_VALID_SORTS = {"gesendet_am", "bestaetigt_am"}
+
+
+@app.route("/email-pruefung")
+def email_pruefung():
+    status_filter = request.args.get("status", "")
+    sort = request.args.get("sort", "")
+
+    query = "SELECT * FROM email_verifikation"
+    params: list = []
+    if status_filter:
+        query += " WHERE status = ?"
+        params.append(status_filter)
+
+    if sort in _VALID_SORTS:
+        query += f" ORDER BY {sort} DESC"
+    else:
+        query += " ORDER BY nachname, vorname"
+
+    with closing(get_db()) as db:
+        mitglieder = db.execute(query, params).fetchall()
+
+    return render_template(
+        "email_pruefung.html",
+        mitglieder=mitglieder,
+        status_filter=status_filter,
+        sort=sort,
+    )
+
+
 @app.route("/archiv")
 def archiv():
     with closing(get_db()) as db:
@@ -561,6 +625,12 @@ def upload():
     _data_dir().mkdir(parents=True, exist_ok=True)
     datei.save(_xls_path())
     _xls_name_path().write_text(dateiname, encoding="utf-8")
+
+    members = load_members_from_xls(str(_xls_path()))
+    if not members:
+        logger.warning("XLS-Upload: load_members_from_xls lieferte keine Mitglieder – Sync übersprungen")
+    _sync_email_verifikation(members)
+
     flash(f"Datei \"{dateiname}\" erfolgreich hochgeladen.", "success")
     return redirect(url_for("index"))
 

@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>E-Mail-Prüfung – Untersuchungs-Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    section { margin-bottom: 2rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
+    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    p.empty { color: #888; font-size: 0.9rem; }
+    .badge-adresse { display: inline-block; font-size: 0.75rem; background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px; padding: 0 5px; color: #856404; }
+    .status-nie_geprueft { color: #6c757d; }
+    .status-ausstehend  { color: #856404; font-weight: 600; }
+    .status-bestaetigt  { color: #155724; font-weight: 600; }
+    .filter-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; font-size: 0.9rem; }
+    .filter-bar a { color: #0d6efd; text-decoration: none; padding: 0.25rem 0.6rem; border: 1px solid #dee2e6; border-radius: 4px; }
+    .filter-bar a.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .sort-link { color: #0d6efd; font-size: 0.8rem; margin-left: 0.3rem; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <h1>Untersuchungs-Checker</h1>
+  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
+    <a href="/" style="color:#0d6efd;text-decoration:none;">← Startseite</a>
+    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
+    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
+    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;font-weight:600;">E-Mail-Prüfung</a>
+  </nav>
+
+  <section>
+    <h2>Mitglieder – E-Mail-Verifikationsstatus</h2>
+
+    <div class="filter-bar">
+      <span>Status:</span>
+      <a href="/email-pruefung{% if sort %}?sort={{ sort }}{% endif %}"
+         class="{% if not status_filter %}active{% endif %}">Alle</a>
+      <a href="/email-pruefung?status=nie_geprueft{% if sort %}&sort={{ sort }}{% endif %}"
+         class="{% if status_filter == 'nie_geprueft' %}active{% endif %}">Nie geprüft</a>
+      <a href="/email-pruefung?status=ausstehend{% if sort %}&sort={{ sort }}{% endif %}"
+         class="{% if status_filter == 'ausstehend' %}active{% endif %}">Ausstehend</a>
+      <a href="/email-pruefung?status=bestaetigt{% if sort %}&sort={{ sort }}{% endif %}"
+         class="{% if status_filter == 'bestaetigt' %}active{% endif %}">Bestätigt</a>
+    </div>
+
+    {% if mitglieder %}
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>E-Mail-Adresse</th>
+          <th>Status</th>
+          <th>
+            Gesendet am
+            <a href="/email-pruefung?sort=gesendet_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
+               class="sort-link" title="Nach Sendedatum sortieren">↕</a>
+          </th>
+          <th>
+            Bestätigt am
+            <a href="/email-pruefung?sort=bestaetigt_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
+               class="sort-link" title="Nach Bestätigungsdatum sortieren">↕</a>
+          </th>
+          <th>Hinweis</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in mitglieder %}
+        <tr>
+          <td>{{ m["nachname"] }}, {{ m["vorname"] }}</td>
+          <td>{{ m["email"] }}</td>
+          <td class="status-{{ m['status'] }}">
+            {% if m["status"] == "nie_geprueft" %}Nie geprüft
+            {% elif m["status"] == "ausstehend" %}Ausstehend
+            {% elif m["status"] == "bestaetigt" %}Bestätigt
+            {% else %}{{ m["status"] }}{% endif %}
+          </td>
+          <td>{{ m["gesendet_am"][:10] | datum_de if m["gesendet_am"] else "–" }}</td>
+          <td>{{ m["bestaetigt_am"][:10] | datum_de if m["bestaetigt_am"] else "–" }}</td>
+          <td>
+            {% if m["adresse_geaendert"] %}
+            <span class="badge-adresse">Adresse geändert</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Keine Mitglieder gefunden. Bitte zuerst eine XLS-Datei hochladen.</p>
+    {% endif %}
+  </section>
+</body>
+</html>
