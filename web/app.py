@@ -50,7 +50,7 @@ _DEFAULT_EMAIL_TEMPLATE = (
     "Bitte kümmern Sie sich zeitnah um eine Verlängerung bzw. Erneuerung der entsprechenden Untersuchung(en).\n\n"
     "Bei Fragen wenden Sie sich bitte an den Kommandanten.\n\n"
     "Mit freundlichen Grüßen\n"
-    "Ihre Feuerwehr Umkirch"
+    "Ihre Feuerwehr"
 )
 
 SETTINGS_DEFAULTS = {
