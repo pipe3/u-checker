@@ -23,6 +23,19 @@
     .filter-bar a { color: #0d6efd; text-decoration: none; padding: 0.25rem 0.6rem; border: 1px solid #dee2e6; border-radius: 4px; }
     .filter-bar a.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
     .sort-link { color: #0d6efd; font-size: 0.8rem; margin-left: 0.3rem; text-decoration: none; }
+    .action-bar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
+    .btn { padding: 0.35rem 0.8rem; border-radius: 4px; border: 1px solid transparent; cursor: pointer; font-size: 0.875rem; }
+    .btn-primary { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .btn-primary:hover { background: #0b5ed7; border-color: #0a58ca; }
+    .btn-secondary { background: #6c757d; color: #fff; border-color: #6c757d; }
+    .btn-secondary:hover { background: #5a6268; border-color: #545b62; }
+    .btn-outline { background: #fff; color: #0d6efd; border-color: #0d6efd; }
+    .btn-outline:hover { background: #e8f0fe; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash-success { background: #d1e7dd; color: #0a3622; border: 1px solid #a3cfbb; }
+    .flash-error   { background: #f8d7da; color: #58151c; border: 1px solid #f1aeb5; }
+    input[type="checkbox"] { cursor: pointer; }
+    th:first-child, td:first-child { width: 2rem; text-align: center; }
   </style>
 </head>
 <body>
@@ -33,6 +46,12 @@
     <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
     <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;font-weight:600;">E-Mail-Prüfung</a>
   </nav>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for category, message in messages %}
+    <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endwith %}
 
   <section>
     <h2>Mitglieder – E-Mail-Verifikationsstatus</h2>
@@ -50,50 +69,84 @@
     </div>
 
     {% if mitglieder %}
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>E-Mail-Adresse</th>
-          <th>Status</th>
-          <th>
-            Gesendet am
-            <a href="/email-pruefung?sort=gesendet_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
-               class="sort-link" title="Nach Sendedatum sortieren">↕</a>
-          </th>
-          <th>
-            Bestätigt am
-            <a href="/email-pruefung?sort=bestaetigt_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
-               class="sort-link" title="Nach Bestätigungsdatum sortieren">↕</a>
-          </th>
-          <th>Hinweis</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for m in mitglieder %}
-        <tr>
-          <td>{{ m["nachname"] }}, {{ m["vorname"] }}</td>
-          <td>{{ m["email"] }}</td>
-          <td class="status-{{ m['status'] }}">
-            {% if m["status"] == "nie_geprueft" %}Nie geprüft
-            {% elif m["status"] == "ausstehend" %}Ausstehend
-            {% elif m["status"] == "bestaetigt" %}Bestätigt
-            {% else %}{{ m["status"] }}{% endif %}
-          </td>
-          <td>{{ m["gesendet_am"][:10] | datum_de if m["gesendet_am"] else "–" }}</td>
-          <td>{{ m["bestaetigt_am"][:10] | datum_de if m["bestaetigt_am"] else "–" }}</td>
-          <td>
-            {% if m["adresse_geaendert"] %}
-            <span class="badge-adresse">Adresse geändert</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <form method="post" action="/email-pruefung/senden" id="senden-form">
+      <div class="action-bar">
+        <button type="button" class="btn btn-outline" id="alle-auswaehlen">Alle auswählen</button>
+        <button type="submit" class="btn btn-primary">Senden</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="check-all" title="Alle auswählen/abwählen"></th>
+            <th>Name</th>
+            <th>E-Mail-Adresse</th>
+            <th>Status</th>
+            <th>
+              Gesendet am
+              <a href="/email-pruefung?sort=gesendet_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
+                 class="sort-link" title="Nach Sendedatum sortieren">↕</a>
+            </th>
+            <th>
+              Bestätigt am
+              <a href="/email-pruefung?sort=bestaetigt_am{% if status_filter %}&status={{ status_filter }}{% endif %}"
+                 class="sort-link" title="Nach Bestätigungsdatum sortieren">↕</a>
+            </th>
+            <th>Hinweis</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in mitglieder %}
+          <tr>
+            <td><input type="checkbox" name="pers_nr" value="{{ m['pers_nr'] }}" class="row-check"></td>
+            <td>{{ m["nachname"] }}, {{ m["vorname"] }}</td>
+            <td>{{ m["email"] }}</td>
+            <td class="status-{{ m['status'] }}">
+              {% if m["status"] == "nie_geprueft" %}Nie geprüft
+              {% elif m["status"] == "ausstehend" %}Ausstehend
+              {% elif m["status"] == "bestaetigt" %}Bestätigt
+              {% else %}{{ m["status"] }}{% endif %}
+            </td>
+            <td>{{ m["gesendet_am"][:10] | datum_de if m["gesendet_am"] else "–" }}</td>
+            <td>{{ m["bestaetigt_am"][:10] | datum_de if m["bestaetigt_am"] else "–" }}</td>
+            <td>
+              {% if m["adresse_geaendert"] %}
+              <span class="badge-adresse">Adresse geändert</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </form>
     {% else %}
     <p class="empty">Keine Mitglieder gefunden. Bitte zuerst eine XLS-Datei hochladen.</p>
     {% endif %}
   </section>
+
+  <script>
+    const checkAll = document.getElementById("check-all");
+    const alleBtn = document.getElementById("alle-auswaehlen");
+    const rowChecks = document.querySelectorAll(".row-check");
+
+    function syncCheckAll() {
+      if (!checkAll) return;
+      checkAll.checked = rowChecks.length > 0 && Array.from(rowChecks).every(cb => cb.checked);
+    }
+
+    if (checkAll) {
+      checkAll.addEventListener("change", () => {
+        rowChecks.forEach(cb => cb.checked = checkAll.checked);
+      });
+    }
+
+    rowChecks.forEach(cb => cb.addEventListener("change", syncCheckAll));
+
+    if (alleBtn) {
+      alleBtn.addEventListener("click", () => {
+        rowChecks.forEach(cb => cb.checked = true);
+        syncCheckAll();
+      });
+    }
+  </script>
 </body>
 </html>

@@ -208,3 +208,163 @@ def test_navigation_enthaelt_email_pruefung_link(client):
     response = client.get("/")
     html = response.data.decode("utf-8")
     assert "E-Mail-Prüfung" in html or "email-pruefung" in html
+
+
+# --- POST /email-pruefung/senden ---
+
+def test_senden_ohne_auswahl_kein_versand(client, tmp_path):
+    """POST ohne ausgewählte Mitglieder sendet nichts und zeigt eine Warnung."""
+    client.get("/")  # DB initialisieren
+    with patch("web.app.send_verifikationsmail") as mock_send:
+        response = client.post("/email-pruefung/senden", data={}, follow_redirects=True)
+    mock_send.assert_not_called()
+    html = response.data.decode("utf-8")
+    assert "ausgewählt" in html or "Keine" in html
+
+
+def test_senden_setzt_status_ausstehend(client, tmp_path):
+    """Nach erfolgreichem Versand wird Status auf 'ausstehend' gesetzt."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg-001@test>"):
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001"]})
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+
+    assert row["status"] == "ausstehend"
+    assert row["gesendet_am"] is not None
+    assert row["verifikationsmail_message_id"] == "<msg-001@test>"
+
+
+def test_senden_speichert_gesendet_am(client, tmp_path):
+    """gesendet_am wird beim Versand auf den aktuellen Zeitstempel gesetzt."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>"):
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001"]})
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT gesendet_am FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+    assert row["gesendet_am"] is not None
+    assert len(row["gesendet_am"]) >= 10  # mindestens YYYY-MM-DD
+
+
+def test_senden_flash_meldung_mit_anzahl(client, tmp_path):
+    """Flash-Meldung enthält die Anzahl der versendeten Mails."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "A",
+         "email": "a@x.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+        {"pers_nr": "002", "vorname": "Lisa", "nachname": "B",
+         "email": "b@x.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>"):
+        response = client.post(
+            "/email-pruefung/senden",
+            data={"pers_nr": ["001", "002"]},
+            follow_redirects=True,
+        )
+    html = response.data.decode("utf-8")
+    assert "2" in html
+
+
+def test_senden_ruft_send_verifikationsmail_mit_korrekten_args_auf(client, tmp_path):
+    """send_verifikationsmail wird mit smtp_config, email, vorname, nachname aufgerufen."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>") as mock_send:
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001"]})
+
+    mock_send.assert_called_once()
+    kwargs = mock_send.call_args
+    assert kwargs.kwargs.get("to_addr") == "max@example.com" or kwargs.args[1] == "max@example.com"
+    assert "Max" in str(kwargs)
+    assert "Muster" in str(kwargs)
+
+
+def test_senden_mehrere_mitglieder(client, tmp_path):
+    """Versand an mehrere Mitglieder aktualisiert alle Datensätze."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "A",
+         "email": "a@x.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+        {"pers_nr": "002", "vorname": "Lisa", "nachname": "B",
+         "email": "b@x.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+        {"pers_nr": "003", "vorname": "Tom", "nachname": "C",
+         "email": "c@x.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>"):
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001", "003"]})
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["pers_nr"]: r for r in db.execute("SELECT * FROM email_verifikation").fetchall()}
+    db.close()
+
+    assert rows["001"]["status"] == "ausstehend"
+    assert rows["003"]["status"] == "ausstehend"
+    assert rows["002"]["status"] == "nie_geprueft"  # nicht ausgewählt
+
+
+def test_email_pruefung_seite_hat_checkboxen(client, tmp_path):
+    """Die Seite /email-pruefung enthält Checkboxen für jeden Mitgliedseintrag."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    response = client.get("/email-pruefung")
+    html = response.data.decode("utf-8")
+    assert 'type="checkbox"' in html
+    assert 'name="pers_nr"' in html
+    assert 'value="001"' in html
+
+
+def test_email_pruefung_seite_hat_senden_button(client, tmp_path):
+    """Die Seite enthält einen Senden-Button zum Absenden des Formulars."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    response = client.get("/email-pruefung")
+    html = response.data.decode("utf-8")
+    assert "Senden" in html
+    assert "/email-pruefung/senden" in html
+
+
+def test_email_pruefung_seite_hat_alle_auswaehlen_button(client, tmp_path):
+    """Die Seite enthält einen 'Alle auswählen'-Button."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    response = client.get("/email-pruefung")
+    html = response.data.decode("utf-8")
+    assert "Alle auswählen" in html or "alle" in html.lower()

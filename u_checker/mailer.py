@@ -1,3 +1,4 @@
+import email.utils
 import os
 import smtplib
 from datetime import date
@@ -129,6 +130,49 @@ def _build_zusammenfassung(
         "subject": effective_betreff,
         "body": body,
     }
+
+
+DEFAULT_VERIFIKATIONS_BETREFF = "Bitte bestätigen Sie Ihre E-Mail-Adresse"
+DEFAULT_VERIFIKATIONS_TEMPLATE = (
+    "Hallo {vorname} {nachname},\n\n"
+    "wir möchten sicherstellen, dass Ihre E-Mail-Adresse in unserem System korrekt hinterlegt ist.\n\n"
+    "Bitte antworten Sie kurz auf diese E-Mail, um zu bestätigen, dass die Adresse erreichbar ist.\n\n"
+    "Vielen Dank!\n\n"
+    "Mit freundlichen Grüßen\n"
+    "Ihre Feuerwehr"
+)
+
+
+def send_verifikationsmail(smtp_config: dict, to_addr: str, vorname: str, nachname: str) -> str:
+    """Sendet eine Verifikationsmail und gibt die Message-ID zurück."""
+    body = DEFAULT_VERIFIKATIONS_TEMPLATE.format(vorname=vorname, nachname=nachname)
+    from_addr = smtp_config.get("from_addr") or SMTP_FROM
+
+    mime = MIMEMultipart()
+    msg_id = email.utils.make_msgid()
+    mime["Message-ID"] = msg_id
+    mime["From"] = from_addr
+    mime["To"] = to_addr
+    mime["Subject"] = DEFAULT_VERIFIKATIONS_BETREFF
+    mime.attach(MIMEText(body, "plain", "utf-8"))
+
+    host = smtp_config.get("host") or SMTP_HOST
+    port = int(smtp_config.get("port") or SMTP_PORT)
+    user = smtp_config.get("user") or SMTP_USER
+    password = smtp_config.get("password") or SMTP_PASSWORD
+
+    if port == 465:
+        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
+    else:
+        ctx = smtplib.SMTP(host, port, timeout=10)
+    with ctx as server:
+        if port != 465:
+            server.starttls()
+        if user and password:
+            server.login(user, password)
+        server.sendmail(from_addr, [to_addr], mime.as_string())
+
+    return msg_id
 
 
 def send_simple_mail(smtp_config: dict, to_addrs: list, subject: str, body: str) -> None:

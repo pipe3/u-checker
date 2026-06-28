@@ -21,7 +21,7 @@ from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_TEMPLATE as _DEFAULT_ZUSAMM
 from web.extractor import load_members_from_xls
 
 logger = logging.getLogger(__name__)
-from u_checker.mailer import send_simple_mail
+from u_checker.mailer import send_simple_mail, send_verifikationsmail
 
 app = Flask(__name__)
 app.config.from_mapping(
@@ -595,6 +595,50 @@ def email_pruefung():
         status_filter=status_filter,
         sort=sort,
     )
+
+
+@app.route("/email-pruefung/senden", methods=["POST"])
+def email_pruefung_senden():
+    pers_nrs = request.form.getlist("pers_nr")
+    if not pers_nrs:
+        flash("Keine Mitglieder ausgewählt.", "error")
+        return redirect(url_for("email_pruefung"))
+
+    cfg = get_settings()
+    smtp_config = _build_smtp_config(cfg)
+    gesendet = 0
+
+    with closing(get_db()) as db:
+        for pers_nr in pers_nrs:
+            row = db.execute(
+                "SELECT vorname, nachname, email FROM email_verifikation WHERE pers_nr = ?",
+                (pers_nr,),
+            ).fetchone()
+            if row is None:
+                continue
+            try:
+                msg_id = send_verifikationsmail(
+                    smtp_config=smtp_config,
+                    to_addr=row["email"],
+                    vorname=row["vorname"],
+                    nachname=row["nachname"],
+                )
+                now = datetime.now().isoformat(timespec="seconds")
+                db.execute(
+                    """UPDATE email_verifikation
+                       SET status='ausstehend', gesendet_am=?, verifikationsmail_message_id=?
+                       WHERE pers_nr=?""",
+                    (now, msg_id, pers_nr),
+                )
+                db.commit()
+                gesendet += 1
+            except Exception as e:
+                logger.exception("Verifikationsmail an %s fehlgeschlagen", row["email"])
+                flash(f"Fehler beim Senden an {row['email']}: {e}", "error")
+
+    if gesendet > 0:
+        flash(f"{gesendet} Verifikationsmail(s) versendet.", "success")
+    return redirect(url_for("email_pruefung"))
 
 
 @app.route("/archiv")
