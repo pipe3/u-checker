@@ -3,7 +3,7 @@ import os
 import re
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -810,6 +810,121 @@ def run():
     except Exception as e:
         flash(f"Fehler beim Ausführen: {e}", "error")
         return redirect(url_for("index"))
+
+
+def _analyse_faelligkeiten(xls_path: str, warn_days: int, pruefungstypen: list) -> tuple:
+    """Returns (personen_mit_email, personen_ohne_email).
+
+    personen_mit_email: list of Person (from check_examinations)
+    personen_ohne_email: list of dicts {name, pruefungen: [{typ, status, datum (ISO str)}]}
+    """
+    import xlrd
+    from u_checker.checker import (
+        COL_TYP, COL_OK, COL_EI_ANZEIGEN, COL_DATUM, COL_GUELTIG_BIS,
+        COL_PERS_NR, COL_VORNAME, COL_NACHNAME, COL_EMAIL, _xl_to_date,
+    )
+
+    heute = date.today()
+    personen = check_examinations(xls_path, warn_days=warn_days, pruefungstypen=pruefungstypen)
+
+    wb = xlrd.open_workbook(xls_path)
+    sh = wb.sheets()[0]
+
+    entries: dict = {}
+    for r in range(1, sh.nrows):
+        row = sh.row_values(r)
+        typ = str(row[COL_TYP]).strip()
+        if typ not in pruefungstypen:
+            continue
+        if str(row[COL_OK]).strip() == "Ja":
+            continue
+        if str(row[COL_EI_ANZEIGEN]).strip() == "Nein":
+            continue
+        if str(row[COL_EMAIL]).strip():
+            continue  # already included via check_examinations
+
+        relevant = _xl_to_date(wb, row[COL_GUELTIG_BIS]) or _xl_to_date(wb, row[COL_DATUM])
+        if not relevant:
+            continue
+
+        pers_nr = str(row[COL_PERS_NR]).strip()
+        name = f"{str(row[COL_VORNAME]).strip()} {str(row[COL_NACHNAME]).strip()}"
+        entries.setdefault(pers_nr, {"name": name, "typen": {}})
+        entries[pers_nr]["typen"].setdefault(typ, []).append({"datum": relevant})
+
+    # Status klassifizierung NACH der Dedup – exakt wie in check_examinations
+    ohne_email = []
+    for info in entries.values():
+        pruefungen_info = []
+        for typ, kandidaten in info["typen"].items():
+            latest = max(kandidaten, key=lambda e: e["datum"])
+            datum = latest["datum"]
+            if datum <= heute:
+                status = "abgelaufen"
+            elif datum <= heute + timedelta(days=warn_days):
+                status = "warnung"
+            else:
+                continue  # neuester Eintrag liegt außerhalb Warnfrist → nicht fällig
+            pruefungen_info.append({
+                "typ": typ,
+                "status": status,
+                "datum": datum.isoformat(),
+            })
+        if pruefungen_info:
+            ohne_email.append({"name": info["name"], "pruefungen": pruefungen_info})
+
+    return personen, ohne_email
+
+
+def _personen_zu_vorschau(personen: list) -> list:
+    """Converts Person list to view model dicts, sorted for preview table."""
+    rows = []
+    for p in personen:
+        pruefungen = [{"typ": pr.typ, "status": pr.status, "datum": pr.datum.isoformat()} for pr in p.pruefungen]
+        fruehestes_datum = min((pr.datum for pr in p.pruefungen), default=None)
+        rows.append({
+            "pers_nr": p.pers_nr,
+            "name": f"{p.vorname} {p.nachname}",
+            "pruefungen": pruefungen,
+            "fruehestes_datum": fruehestes_datum.isoformat() if fruehestes_datum else "",
+            "cc_flag": p.hat_abgelaufene,
+        })
+    rows.sort(key=lambda r: (
+        0 if r["cc_flag"] else 1,
+        r["fruehestes_datum"] or "9999-12-31",
+    ))
+    return rows
+
+
+@app.route("/faelligkeiten")
+def faelligkeiten():
+    xls_vorhanden = _xls_path().exists()
+    return render_template("faelligkeiten.html", xls_vorhanden=xls_vorhanden, vorschau=None, ohne_email=[])
+
+
+@app.route("/faelligkeiten/analyse", methods=["POST"])
+def faelligkeiten_analyse():
+    if not _xls_path().exists():
+        flash("Keine XLS-Datei vorhanden. Bitte zuerst hochladen.", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    cfg = get_settings()
+    warn_days = _safe_int(cfg.get("warn_days"), 90)
+    pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
+
+    try:
+        personen, ohne_email = _analyse_faelligkeiten(str(_xls_path()), warn_days, pruefungstypen)
+    except Exception as e:
+        flash(f"Fehler beim Analysieren: {e}", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    vorschau = _personen_zu_vorschau(personen)
+    return render_template(
+        "faelligkeiten.html",
+        xls_vorhanden=True,
+        vorschau=vorschau,
+        ohne_email=ohne_email,
+    )
 
 
 if __name__ == "__main__":

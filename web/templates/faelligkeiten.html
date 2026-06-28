@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fälligkeiten – Untersuchungs-Checker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    section { margin-bottom: 2rem; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    button:disabled { background: #adb5bd; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
+    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    .status-abgelaufen { color: #721c24; font-weight: 600; }
+    .status-warnung    { color: #856404; }
+    .cc-badge { font-size: 0.75rem; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 3px; padding: 0 5px; color: #721c24; font-weight: 600; }
+    p.empty { color: #888; font-size: 0.9rem; }
+    .hinweis-block { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 0.75rem 1rem; margin-top: 1.5rem; font-size: 0.875rem; }
+    .hinweis-block ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+    .hinweis-block li { margin-bottom: 0.25rem; }
+    .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+    .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
+    .badge.zero { background: #6c757d; }
+  </style>
+</head>
+<body>
+  <h1>Untersuchungs-Checker</h1>
+  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
+    <a href="/" style="color:#0d6efd;text-decoration:none;">Startseite</a>
+    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
+    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
+    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
+  </nav>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+
+  <section>
+    <h2>Fälligkeiten analysieren</h2>
+
+    {% if vorschau is none %}
+    {# Leerzustand: noch keine Analyse gestartet #}
+    <form action="/faelligkeiten/analyse" method="post">
+      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Analyse starten</button>
+    </form>
+    {% if not xls_vorhanden %}
+    <p class="meta">Keine XLS-Datei vorhanden. Bitte zuerst auf der <a href="/">Startseite</a> hochladen.</p>
+    {% endif %}
+
+    {% else %}
+    {# Vorschau-Zustand: Analyse abgeschlossen #}
+
+    {% if vorschau %}
+    <div class="toolbar">
+      <button type="button" onclick="alleAuswaehlen()">Alle auswählen</button>
+    </div>
+    <form action="/faelligkeiten/senden" method="post">
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Name</th>
+            <th>Prüfungen</th>
+            <th>Frühestes Datum</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in vorschau %}
+          <tr>
+            <td style="width:2rem;text-align:center;">
+              <input type="checkbox" name="pers_nr" value="{{ row.pers_nr }}" id="cb_{{ row.pers_nr }}">
+            </td>
+            <td>{{ row.name }}</td>
+            <td>
+              {% for pr in row.pruefungen %}
+              <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
+              <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
+              {% if not loop.last %}<br>{% endif %}
+              {% endfor %}
+            </td>
+            <td style="white-space:nowrap;">{{ row.fruehestes_datum | datum_de }}</td>
+            <td>
+              {% if row.cc_flag %}<span class="cc-badge">CC</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div style="margin-top:1rem;">
+        <button type="submit">E-Mails senden</button>
+      </div>
+    </form>
+
+    {% else %}
+    <p class="empty">Keine Fälligkeiten gefunden.</p>
+    {% endif %}
+
+    {% if ohne_email %}
+    <div class="hinweis-block">
+      <strong>Personen ohne E-Mail-Adresse</strong> – können nicht benachrichtigt werden:
+      <ul>
+        {% for p in ohne_email %}
+        <li>
+          {{ p.name }}:
+          {% for pr in p.pruefungen %}
+          <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
+          <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
+          {% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:1.5rem;">
+      <form action="/faelligkeiten/analyse" method="post" style="display:inline;">
+        <button type="submit" class="secondary">Neu analysieren</button>
+      </form>
+    </div>
+
+    {% endif %}
+  </section>
+
+  <script>
+    function alleAuswaehlen() {
+      const checkboxen = document.querySelectorAll('input[name="pers_nr"]');
+      const alleAngehakt = Array.from(checkboxen).every(cb => cb.checked);
+      checkboxen.forEach(cb => { cb.checked = !alleAngehakt; });
+    }
+  </script>
+</body>
+</html>
