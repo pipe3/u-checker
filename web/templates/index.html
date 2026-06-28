@@ -80,11 +80,6 @@
     {% if not xls_vorhanden %}
     <p class="meta">Bitte zuerst eine XLS-Datei hochladen.</p>
     {% endif %}
-    {% if script_intervall == 'manuell' %}
-    <p class="meta">Automatischer Zeitplan: <strong>inaktiv</strong> – <a href="/settings" style="color:#0d6efd;">Intervall konfigurieren</a></p>
-    {% elif naechster_lauf %}
-    <p class="meta">Nächster automatischer Lauf: <strong>{{ naechster_lauf | replace("T", " ") }}</strong> ({{ script_intervall }})</p>
-    {% endif %}
   </section>
 
   <section>

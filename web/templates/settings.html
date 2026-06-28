@@ -122,22 +122,11 @@
       </div>
     </div>
 
-    <h2>Archiv &amp; Automatisierung</h2>
-    <div class="grid-2">
-      <div class="field">
-        <label for="archiv_tage">Aufbewahrungsfrist Archiv (Tage)</label>
-        <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
-        <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
-      </div>
-      <div class="field">
-        <label for="script_intervall">Script-Intervall</label>
-        <select id="script_intervall" name="script_intervall">
-          <option value="wöchentlich" {% if cfg.script_intervall == 'wöchentlich' %}selected{% endif %}>Wöchentlich</option>
-          <option value="monatlich" {% if cfg.script_intervall == 'monatlich' %}selected{% endif %}>Monatlich</option>
-          <option value="manuell" {% if cfg.script_intervall == 'manuell' %}selected{% endif %}>Nur manuell</option>
-        </select>
-        <p class="hint">Wöchentlich oder monatlich: Script wird automatisch ausgeführt. Manuell: nur auf Knopfdruck.</p>
-      </div>
+    <h2>Archiv</h2>
+    <div class="field">
+      <label for="archiv_tage">Aufbewahrungsfrist Archiv (Tage)</label>
+      <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
+      <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
     </div>
 
     <h2>E-Mail an Mitglieder</h2>

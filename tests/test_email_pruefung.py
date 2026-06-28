@@ -377,7 +377,6 @@ def test_senden_nutzt_verifikation_betreff_und_template_aus_db(client, tmp_path)
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "", "zusammenfassung_template": "",
         "verifikation_betreff": "Test-Verifikations-Betreff",

@@ -72,8 +72,6 @@ SETTINGS_DEFAULTS = {
     "warn_days": os.getenv("WARN_DAYS", "90"),
     "pruefungstypen": os.getenv("PRUEFUNGSTYPEN", "G25"),
     "archiv_tage": "365",
-    "script_intervall": "wöchentlich",
-    "naechster_lauf": "",
     "email_betreff": _DEFAULT_EMAIL_BETREFF,
     "email_template": _DEFAULT_EMAIL_TEMPLATE,
     "zusammenfassung_betreff": _DEFAULT_ZUSAMMENFASSUNG_BETREFF,
@@ -160,6 +158,7 @@ def init_db():
             )
         """)
         _migrate_tasks(db)
+        _migrate_settings(db)
         db.commit()
 
 
@@ -182,6 +181,12 @@ def _sync_email_verifikation(members: list) -> None:
                     (m["vorname"], m["nachname"], m["email"], m["pers_nr"]),
                 )
         db.commit()
+
+
+def _migrate_settings(db):
+    """Entfernt veraltete Settings-Keys aus bestehenden DBs."""
+    for key in ("script_intervall", "naechster_lauf"):
+        db.execute("DELETE FROM settings WHERE key = ?", (key,))
 
 
 def _migrate_tasks(db):
@@ -252,48 +257,8 @@ def _build_smtp_config(cfg: dict) -> dict:
     }
 
 
-def _send_blockier_benachrichtigung(offene_count: int, dry_run: bool = False) -> None:
-    if dry_run:
-        return
-    cfg = get_settings()
-    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
-    if not zusammenfassung_an:
-        return
-    send_simple_mail(
-        smtp_config=_build_smtp_config(cfg),
-        to_addrs=zusammenfassung_an,
-        subject=f"Automatischer Lauf blockiert: {offene_count} offene Task(s)",
-        body=(
-            f"Der geplante automatische Lauf wurde übersprungen, weil {offene_count} "
-            f"offene Task(s) in der Warteschlange vorhanden sind.\n\n"
-            f"Bitte die offenen Tasks manuell abarbeiten und anschließend den Lauf "
-            f"manuell starten."
-        ),
-    )
-
-
-def _do_run(dry_run: bool = False, manuell: bool = True) -> tuple:
+def _do_run(dry_run: bool = False) -> tuple:
     """Lauf ausführen; schreibt immer einen DB-Eintrag, auch bei FileNotFoundError."""
-    if not manuell:
-        with closing(get_db()) as db:
-            offene_count = db.execute(
-                "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
-            ).fetchone()[0]
-        if offene_count > 0:
-            gestartet = datetime.now().isoformat(timespec="seconds")
-            with closing(get_db()) as db:
-                db.execute(
-                    "INSERT INTO runs (gestartet_am, abgeschlossen_am, dry_run, status, fehlermeldung) "
-                    "VALUES (?, ?, ?, 'blockiert', ?)",
-                    (gestartet, gestartet, int(dry_run), f"{offene_count} offene Task(s)"),
-                )
-                db.commit()
-            try:
-                _send_blockier_benachrichtigung(offene_count, dry_run=dry_run)
-            except Exception:
-                logger.exception("Blockier-Benachrichtigung konnte nicht gesendet werden")
-            return [], 0
-
     gestartet = datetime.now().isoformat(timespec="seconds")
     with closing(get_db()) as db:
         cursor = db.execute(
@@ -387,9 +352,6 @@ def index():
     if xls_vorhanden and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
         members = load_members_from_xls(str(_xls_path()))
 
-    cfg = get_settings()
-    naechster_lauf = cfg.get("naechster_lauf") or None
-    script_intervall = cfg.get("script_intervall", "manuell")
     return render_template(
         "index.html",
         runs=runs,
@@ -397,8 +359,6 @@ def index():
         offene_tasks_count=offene_tasks_count,
         xls_vorhanden=xls_vorhanden,
         xls_dateiname=xls_dateiname,
-        naechster_lauf=naechster_lauf,
-        script_intervall=script_intervall,
         members=members,
     )
 
@@ -711,7 +671,7 @@ def settings_save():
         "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
         "imap_host", "imap_port", "imap_user", "imap_password", "imap_poll_minuten",
         "kommandanten_cc", "zusammenfassung_an",
-        "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
+        "warn_days", "pruefungstypen", "archiv_tage",
         "email_betreff", "email_template",
         "zusammenfassung_betreff", "zusammenfassung_template",
         "verifikation_betreff", "verifikation_template",

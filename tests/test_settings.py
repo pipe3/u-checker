@@ -66,7 +66,6 @@ def test_settings_speichern_redirect(client):
         "warn_days": "60",
         "pruefungstypen": "G25,G26",
         "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
     })
     assert response.status_code in (302, 200)
 
@@ -83,7 +82,6 @@ def test_settings_werden_in_db_gespeichert(client, tmp_path):
         "warn_days": "45",
         "pruefungstypen": "G25",
         "archiv_tage": "180",
-        "script_intervall": "monatlich",
     })
     db = sqlite3.connect(tmp_path / "checker.db")
     db.row_factory = sqlite3.Row
@@ -109,7 +107,6 @@ def test_settings_werden_nach_neustart_geladen(client, tmp_path):
         "warn_days": "30",
         "pruefungstypen": "G25,FSK",
         "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
     })
     html = client.get("/settings").data.decode()
     assert "saved.host.de" in html
@@ -128,7 +125,6 @@ def test_settings_speichern_zeigt_erfolgsmeldung(client):
         "warn_days": "90",
         "pruefungstypen": "G25",
         "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
     }, follow_redirects=True)
     assert b"gespeichert" in response.data
 
@@ -154,7 +150,6 @@ def test_run_nutzt_warn_days_aus_db(client, tmp_path):
         "warn_days": "120",
         "pruefungstypen": "G25,G26",
         "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
     })
 
     xls_path = tmp_path / "latest.xls"
@@ -199,7 +194,6 @@ def test_settings_speichert_email_betreff(client, tmp_path):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Mein Betreff Test",
         "email_template": "Hallo {vorname}, bitte handeln.",
     })
@@ -217,7 +211,6 @@ def test_settings_email_felder_nach_reload(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Individueller Betreff",
         "email_template": "Lieber {vorname} {nachname}, {pruefungen_liste}",
     })
@@ -236,7 +229,6 @@ def test_settings_ungueltige_platzhalter_werden_abgelehnt(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Betreff",
         "email_template": "Hallo {vorname}, Kosten: {15,00 EUR}",
     }, follow_redirects=True)
@@ -249,7 +241,6 @@ def test_settings_unbekannter_platzhalter_wird_abgelehnt(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Betreff",
         "email_template": "Hallo {vorname}, {unbekannt}!",
     }, follow_redirects=True)
@@ -262,7 +253,6 @@ def test_settings_gueltiges_template_wird_gespeichert(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Betreff",
         "email_template": "Hallo {vorname} {nachname},\n{pruefungen_liste}",
     }, follow_redirects=True)
@@ -295,7 +285,6 @@ def test_settings_speichert_zusammenfassung_betreff(client, tmp_path):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "Mein Zusammenfassungs-Betreff",
         "zusammenfassung_template": "Stand {datum}\n{zusammenfassung}\n{anzahl_personen} {anzahl_abgelaufen} {anzahl_warnung}",
@@ -313,7 +302,6 @@ def test_settings_zusammenfassung_felder_nach_reload(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "Gespeicherter Betreff",
         "zusammenfassung_template": "Liebe Kommandanten, {datum}",
@@ -333,7 +321,6 @@ def test_run_nutzt_zusammenfassung_template_aus_db(client, tmp_path):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "Test-Zusammenfassung-Betreff",
         "zusammenfassung_template": "Test {datum} {zusammenfassung} {anzahl_personen} {anzahl_abgelaufen} {anzahl_warnung}",
@@ -361,7 +348,6 @@ def test_run_nutzt_email_template_aus_db(client, tmp_path):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "Test-Betreff",
         "email_template": "Test-Template {vorname}",
     })
@@ -420,7 +406,6 @@ def test_settings_speichert_verifikation_felder(client, tmp_path):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "", "zusammenfassung_template": "",
         "verifikation_betreff": "Bitte E-Mail bestätigen",
@@ -441,7 +426,6 @@ def test_settings_verifikation_felder_nach_reload(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "", "zusammenfassung_template": "",
         "verifikation_betreff": "Gespeicherter Verifikations-Betreff",
@@ -459,7 +443,6 @@ def test_settings_ungueltige_verifikation_platzhalter_abgelehnt(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "", "zusammenfassung_template": "",
         "verifikation_betreff": "Betreff",
@@ -475,7 +458,6 @@ def test_settings_gueltiges_verifikation_template_wird_gespeichert(client):
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
-        "script_intervall": "wöchentlich",
         "email_betreff": "", "email_template": "",
         "zusammenfassung_betreff": "", "zusammenfassung_template": "",
         "verifikation_betreff": "Betreff",
