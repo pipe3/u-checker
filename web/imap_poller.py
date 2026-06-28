@@ -78,6 +78,13 @@ def process_email(
     )
     task_id = cursor.lastrowid
 
+    # Nachweis als implizite E-Mail-Bestätigung: mitglied_nr gesetzt → Adresse gilt als aktiv bestätigt
+    if mitglied_nr:
+        db.execute(
+            "UPDATE email_verifikation SET bestaetigt_am=?, status='bestaetigt' WHERE pers_nr=?",
+            (empfangen_am, mitglied_nr),
+        )
+
     # Duplikaterkennung: gleicher Absender + gleicher Typ innerhalb von 14 Tagen
     if pruefungstyp and von_email:
         from datetime import timedelta

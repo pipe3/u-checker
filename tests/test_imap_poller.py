@@ -579,3 +579,146 @@ def test_verifikation_mit_nicht_passendem_in_reply_to_laeuft_normal(db_app):
     count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
     db.close()
     assert count == 1
+
+
+# --- Nachweis als implizite E-Mail-Bestätigung ---
+
+def _insert_verifikation_for_member(db_path, pers_nr="001", status="ausstehend"):
+    db = sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO email_verifikation
+           (pers_nr, vorname, nachname, email, status)
+           VALUES (?, ?, ?, ?, ?)""",
+        (pers_nr, "Max", "Mustermann", "max@example.com", status),
+    )
+    db.commit()
+    db.close()
+
+
+def test_nachweis_setzt_bestaetigt_am_bei_zugeordnetem_mitglied(db_app):
+    """Zugeordneter Nachweis aktualisiert bestaetigt_am und setzt Status auf bestaetigt."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", status="ausstehend")
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<nachweis-1@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 1.0,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert row["bestaetigt_am"] is not None
+
+
+def test_nachweis_aktualisiert_bestaetigt_am_wenn_bereits_bestaetigt(db_app):
+    """Bereits bestätigte Mitglieder bekommen bestaetigt_am aktualisiert."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", status="bestaetigt")
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute("UPDATE email_verifikation SET bestaetigt_am = '2020-01-01T00:00:00' WHERE pers_nr = '001'")
+    db.commit()
+    db.close()
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<nachweis-2@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 1.0,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert row["bestaetigt_am"] != "2020-01-01T00:00:00"
+
+
+def test_unklare_zuordnung_aktualisiert_verifikation_nicht(db_app):
+    """Nicht zugeordnete Nachweise ändern email_verifikation nicht."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", status="ausstehend")
+
+    raw = _make_raw_email(from_addr="Unbekannt <nobody@example.com>", message_id="<unklar-3@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": None,
+        "match_score": 0.3,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "ausstehend"
+    assert row["bestaetigt_am"] is None
+
+
+def test_nachweis_ohne_mitglied_match_aktualisiert_verifikation_nicht(db_app):
+    """Nachweis ohne Mitgliederliste (mitglied_nr=None) ändert email_verifikation nicht."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", status="ausstehend")
+
+    raw = _make_raw_email(message_id="<no-member-4@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": None,
+        "match_score": 0.0,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                # Keine XLS-Datei → members=[], kein UNKLARE_ZUORDNUNG-Zweig
+                process_email(db, raw, xls_path=None, pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "ausstehend"
+    assert row["bestaetigt_am"] is None
