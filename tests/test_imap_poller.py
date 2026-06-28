@@ -400,3 +400,182 @@ def test_process_email_duplikat_markierung(db_app):
     db.close()
     assert rows[0]["hinweis"] is None
     assert rows[1]["hinweis"] == "Mögliches Duplikat"
+
+
+# --- Verifikationsantworten ---
+
+def _make_reply_email(
+    from_addr: str = "Max Mustermann <max@example.com>",
+    subject: str = "Re: Bitte bestätigen Sie Ihre E-Mail-Adresse",
+    body: str = "Ja, das bin ich.",
+    message_id: str = "<reply-1@example.com>",
+    in_reply_to: str = "<verif-123@example.com>",
+) -> bytes:
+    msg = email.message.EmailMessage()
+    msg["From"] = from_addr
+    msg["Subject"] = subject
+    msg["Message-ID"] = message_id
+    msg["In-Reply-To"] = in_reply_to
+    msg["Date"] = "Mon, 01 Jan 2025 12:00:00 +0000"
+    msg.set_content(body)
+    return msg.as_bytes()
+
+
+def _insert_verifikation(db_path, pers_nr="001", status="ausstehend", message_id="<verif-123@example.com>"):
+    db = sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO email_verifikation
+           (pers_nr, vorname, nachname, email, status, verifikationsmail_message_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (pers_nr, "Max", "Mustermann", "max@example.com", status, message_id),
+    )
+    db.commit()
+    db.close()
+
+
+_IMAP_SETTINGS = {
+    "imap_host": "imap.example.com",
+    "imap_port": "993",
+    "imap_user": "test@example.com",
+    "imap_password": "pass",
+    "imap_verifikation_ordner": "u-checker-verifikation",
+}
+
+
+def _make_mock_imap(raw: bytes, folder_exists: bool = True):
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (RFC822 {100})", raw)])
+    mock_imap.copy.return_value = ("OK", [b""])
+    if folder_exists:
+        mock_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "." "u-checker-verifikation"'])
+    else:
+        mock_imap.list.return_value = ("OK", [b""])
+    return mock_imap
+
+
+def test_verifikationsantwort_setzt_status_bestaetigt(db_app):
+    """Eingehende Mail mit passendem In-Reply-To setzt Status → bestaetigt."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert row["bestaetigt_am"] is not None
+
+
+def test_verifikationsantwort_erstellt_keinen_task(db_app):
+    """Für Verifikationsantworten wird kein Task erstellt."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            result = poll_inbox(app)
+
+    assert result == 0
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    db.close()
+    assert count == 0
+
+
+def test_verifikationsantwort_wird_in_ordner_verschoben(db_app):
+    """Die Antwortmail wird in den konfigurierten IMAP-Ordner verschoben."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    mock_imap.copy.assert_called_once_with(b"1", "u-checker-verifikation")
+    mock_imap.store.assert_any_call(b"1", "+FLAGS", "\\Deleted")
+    mock_imap.expunge.assert_called_once()
+
+
+def test_imap_ordner_wird_erstellt_wenn_nicht_vorhanden(db_app):
+    """Existiert der IMAP-Ordner nicht, wird er automatisch per CREATE angelegt."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>")
+    mock_imap = _make_mock_imap(raw, folder_exists=False)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    mock_imap.create.assert_called_once_with("u-checker-verifikation")
+
+
+def test_normale_mail_laeuft_durch_nachweis_flow(db_app):
+    """Eingehende Mails ohne In-Reply-To-Treffer laufen unverändert durch den Nachweis-Flow."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    raw = _make_raw_email()  # keine In-Reply-To Header
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            result = poll_inbox(app)
+
+    assert result == 1
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    db.close()
+    assert count == 1
+
+
+def test_verifikation_mit_nicht_passendem_in_reply_to_laeuft_normal(db_app):
+    """Mail mit In-Reply-To, das keiner Verifikations-Message-ID entspricht, wird als Task angelegt."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db", message_id="<verif-999@example.com>")
+    # Reply-To zeigt auf eine andere ID als die gespeicherte
+    raw = _make_reply_email(in_reply_to="<andere-id@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            result = poll_inbox(app)
+
+    assert result == 1
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    db.close()
+    assert count == 1

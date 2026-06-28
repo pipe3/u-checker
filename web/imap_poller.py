@@ -133,6 +133,22 @@ def _send_admin_notification(smtp_config: dict, admin_emails: list[str], new_cou
         logger.exception("Admin-Benachrichtigung fehlgeschlagen")
 
 
+def _ensure_imap_ordner(imap, folder_name: str) -> None:
+    """Legt den IMAP-Ordner an, falls er noch nicht existiert."""
+    _, folders = imap.list('""', folder_name)
+    exists = folders and folders[0] and folder_name.encode() in (folders[0] or b"")
+    if not exists:
+        imap.create(folder_name)
+
+
+def _move_email_to_folder(imap, msg_id: bytes, folder_name: str) -> None:
+    """Markiert eine Nachricht für Verschiebung per COPY + \\Deleted; Expunge erfolgt außerhalb der Schleife."""
+    typ, _ = imap.copy(msg_id, folder_name)
+    if typ != "OK":
+        raise RuntimeError(f"IMAP COPY fehlgeschlagen (Status: {typ})")
+    imap.store(msg_id, "+FLAGS", "\\Deleted")
+
+
 def poll_inbox(app) -> int:
     """Poll IMAP inbox and create tasks for new emails. Returns count of new tasks."""
     with app.app_context():
@@ -147,6 +163,7 @@ def poll_inbox(app) -> int:
             return 0
 
         imap_port = _safe_int(cfg.get("imap_port"), 993)
+        verifikation_ordner = (cfg.get("imap_verifikation_ordner") or "u-checker-verifikation").strip()
 
         # Fetch emails; keep connection open so we can mark Seen after DB commit
         imap = None
@@ -173,23 +190,61 @@ def poll_inbox(app) -> int:
                     pass
             return 0
 
+        # Separate Verifikationsantworten von normalen Mails
+        verif_replies: list[tuple[str, bytes]] = []   # (pers_nr, imap_msg_id)
+        normal_emails: list[tuple[bytes, bytes]] = []  # (imap_msg_id, raw_bytes)
+
+        with closing(get_db()) as db:
+            for imap_msg_id, raw in fetched:
+                msg = email.message_from_bytes(raw)
+                in_reply_to = (msg.get("In-Reply-To") or "").strip()
+                if in_reply_to:
+                    row = db.execute(
+                        "SELECT pers_nr FROM email_verifikation WHERE verifikationsmail_message_id = ?",
+                        (in_reply_to,),
+                    ).fetchone()
+                    if row:
+                        verif_replies.append((row["pers_nr"], imap_msg_id))
+                        continue
+                normal_emails.append((imap_msg_id, raw))
+
+        # Verifikationsantworten verarbeiten: Status setzen + in Ordner verschieben
+        if verif_replies:
+            try:
+                now = datetime.now().isoformat(timespec="seconds")
+                _ensure_imap_ordner(imap, verifikation_ordner)
+                for pers_nr, imap_msg_id in verif_replies:
+                    with closing(get_db()) as db:
+                        db.execute(
+                            "UPDATE email_verifikation SET status='bestaetigt', bestaetigt_am=? WHERE pers_nr=?",
+                            (now, pers_nr),
+                        )
+                        db.commit()
+                    try:
+                        _move_email_to_folder(imap, imap_msg_id, verifikation_ordner)
+                    except Exception:
+                        logger.warning("IMAP-Verschiebung fehlgeschlagen für Mitglied %s", pers_nr)
+                imap.expunge()
+            except Exception:
+                logger.exception("Verifikationsantworten konnten nicht verarbeitet werden")
+
         # Commit to DB before marking emails as Seen on the server
         new_count = 0
         from web.app import _xls_path
         xls_path = str(_xls_path()) if _xls_path().exists() else None
         pruefungstypen_list = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
         with closing(get_db()) as db:
-            for _, raw in fetched:
+            for _, raw in normal_emails:
                 if process_email(db, raw, xls_path=xls_path, pruefungstypen=pruefungstypen_list):
                     new_count += 1
             db.commit()
 
         # Only mark Seen after successful DB commit
         try:
-            for imap_msg_id, _ in fetched:
+            for imap_msg_id, _ in normal_emails:
                 imap.store(imap_msg_id, "+FLAGS", "\\Seen")
         except Exception:
-            logger.warning("IMAP Seen-Markierung fehlgeschlagen für %d Nachrichten", len(fetched))
+            logger.warning("IMAP Seen-Markierung fehlgeschlagen für %d Nachrichten", len(normal_emails))
 
         try:
             imap.logout()
