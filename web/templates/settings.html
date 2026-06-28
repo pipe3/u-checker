@@ -162,6 +162,22 @@
       <p class="hint">Verfügbare Platzhalter: <code>{datum}</code>, <code>{zusammenfassung}</code>, <code>{anzahl_personen}</code>, <code>{anzahl_abgelaufen}</code>, <code>{anzahl_warnung}</code></p>
     </div>
 
+    <h2>Verifikations-Mail</h2>
+    <div class="field">
+      <label for="verifikation_betreff">Betreff</label>
+      <input type="text" id="verifikation_betreff" name="verifikation_betreff" value="{{ cfg.verifikation_betreff }}" placeholder="Bitte bestätigen Sie Ihre E-Mail-Adresse">
+    </div>
+    <div class="field">
+      <label for="verifikation_template">Mailtext</label>
+      <textarea id="verifikation_template" name="verifikation_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.verifikation_template }}</textarea>
+      <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code></p>
+    </div>
+    <div class="field" style="max-width:350px;">
+      <label for="imap_verifikation_ordner">IMAP-Ordner für Verifikations-Antworten</label>
+      <input type="text" id="imap_verifikation_ordner" name="imap_verifikation_ordner" value="{{ cfg.imap_verifikation_ordner }}" placeholder="u-checker-verifikation">
+      <p class="hint">In diesen IMAP-Ordner werden Antworten auf Verifikationsmails verschoben.</p>
+    </div>
+
     <button type="submit">Einstellungen speichern</button>
   </form>
 

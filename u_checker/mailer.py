@@ -143,9 +143,19 @@ DEFAULT_VERIFIKATIONS_TEMPLATE = (
 )
 
 
-def send_verifikationsmail(smtp_config: dict, to_addr: str, vorname: str, nachname: str) -> str:
+def send_verifikationsmail(
+    smtp_config: dict,
+    to_addr: str,
+    vorname: str,
+    nachname: str,
+    *,
+    betreff: Optional[str] = None,
+    template: Optional[str] = None,
+) -> str:
     """Sendet eine Verifikationsmail und gibt die Message-ID zurück."""
-    body = DEFAULT_VERIFIKATIONS_TEMPLATE.format(vorname=vorname, nachname=nachname)
+    effective_betreff = betreff or DEFAULT_VERIFIKATIONS_BETREFF
+    effective_template = template or DEFAULT_VERIFIKATIONS_TEMPLATE
+    body = effective_template.format(vorname=vorname, nachname=nachname)
     from_addr = smtp_config.get("from_addr") or SMTP_FROM
 
     mime = MIMEMultipart()
@@ -153,7 +163,7 @@ def send_verifikationsmail(smtp_config: dict, to_addr: str, vorname: str, nachna
     mime["Message-ID"] = msg_id
     mime["From"] = from_addr
     mime["To"] = to_addr
-    mime["Subject"] = DEFAULT_VERIFIKATIONS_BETREFF
+    mime["Subject"] = effective_betreff
     mime.attach(MIMEText(body, "plain", "utf-8"))
 
     host = smtp_config.get("host") or SMTP_HOST

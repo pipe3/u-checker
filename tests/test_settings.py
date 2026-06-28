@@ -386,3 +386,100 @@ def test_run_nutzt_email_template_aus_db(client, tmp_path):
 
     assert captured_kwargs.get("email_betreff") == "Test-Betreff"
     assert captured_kwargs.get("email_template") == "Test-Template {vorname}"
+
+
+# --- Verifikations-Mail-Template (Issue #21) ---
+
+def test_settings_zeigt_verifikation_betreff_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="verifikation_betreff"' in html
+
+
+def test_settings_zeigt_verifikation_template_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="verifikation_template"' in html
+
+
+def test_settings_zeigt_imap_verifikation_ordner_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="imap_verifikation_ordner"' in html
+
+
+def test_settings_verifikation_standardwerte_ohne_db(client):
+    html = client.get("/settings").data.decode()
+    assert "antworten" in html
+
+
+def test_settings_imap_verifikation_ordner_standardwert(client):
+    html = client.get("/settings").data.decode()
+    assert "u-checker-verifikation" in html
+
+
+def test_settings_speichert_verifikation_felder(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "Bitte E-Mail bestätigen",
+        "verifikation_template": "Hallo {vorname} {nachname}, bitte antworten.",
+        "imap_verifikation_ordner": "mein-verifikations-ordner",
+    })
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings").fetchall()}
+    db.close()
+    assert rows["verifikation_betreff"] == "Bitte E-Mail bestätigen"
+    assert rows["verifikation_template"] == "Hallo {vorname} {nachname}, bitte antworten."
+    assert rows["imap_verifikation_ordner"] == "mein-verifikations-ordner"
+
+
+def test_settings_verifikation_felder_nach_reload(client):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "Gespeicherter Verifikations-Betreff",
+        "verifikation_template": "Lieber {vorname} {nachname}, bitte melden.",
+        "imap_verifikation_ordner": "fw-verifikation",
+    })
+    html = client.get("/settings").data.decode()
+    assert "Gespeicherter Verifikations-Betreff" in html
+    assert "Lieber {vorname}" in html
+    assert "fw-verifikation" in html
+
+
+def test_settings_ungueltige_verifikation_platzhalter_abgelehnt(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "Betreff",
+        "verifikation_template": "Hallo {vorname}, {unbekannt}!",
+        "imap_verifikation_ordner": "",
+    }, follow_redirects=True)
+    html = response.data.decode()
+    assert "Platzhalter" in html or "error" in html.lower()
+
+
+def test_settings_gueltiges_verifikation_template_wird_gespeichert(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "Betreff",
+        "verifikation_template": "Hallo {vorname} {nachname}, bitte antworten.",
+        "imap_verifikation_ordner": "",
+    }, follow_redirects=True)
+    assert b"gespeichert" in response.data

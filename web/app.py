@@ -18,10 +18,12 @@ from u_checker import check_examinations, send_notifications, send_summary
 from u_checker.mailer import DEFAULT_EMAIL_BETREFF as _DEFAULT_EMAIL_BETREFF
 from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_BETREFF as _DEFAULT_ZUSAMMENFASSUNG_BETREFF
 from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_TEMPLATE as _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
+from u_checker.mailer import DEFAULT_VERIFIKATIONS_BETREFF as _DEFAULT_VERIFIKATIONS_BETREFF
+from u_checker.mailer import DEFAULT_VERIFIKATIONS_TEMPLATE as _DEFAULT_VERIFIKATIONS_TEMPLATE
+from u_checker.mailer import send_simple_mail, send_verifikationsmail
 from web.extractor import load_members_from_xls
 
 logger = logging.getLogger(__name__)
-from u_checker.mailer import send_simple_mail, send_verifikationsmail
 
 app = Flask(__name__)
 app.config.from_mapping(
@@ -76,6 +78,9 @@ SETTINGS_DEFAULTS = {
     "email_template": _DEFAULT_EMAIL_TEMPLATE,
     "zusammenfassung_betreff": _DEFAULT_ZUSAMMENFASSUNG_BETREFF,
     "zusammenfassung_template": _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE,
+    "verifikation_betreff": _DEFAULT_VERIFIKATIONS_BETREFF,
+    "verifikation_template": _DEFAULT_VERIFIKATIONS_TEMPLATE,
+    "imap_verifikation_ordner": "u-checker-verifikation",
 }
 
 
@@ -606,6 +611,8 @@ def email_pruefung_senden():
 
     cfg = get_settings()
     smtp_config = _build_smtp_config(cfg)
+    verifikation_betreff = cfg.get("verifikation_betreff") or _DEFAULT_VERIFIKATIONS_BETREFF
+    verifikation_template = cfg.get("verifikation_template") or _DEFAULT_VERIFIKATIONS_TEMPLATE
     gesendet = 0
 
     with closing(get_db()) as db:
@@ -622,6 +629,8 @@ def email_pruefung_senden():
                     to_addr=row["email"],
                     vorname=row["vorname"],
                     nachname=row["nachname"],
+                    betreff=verifikation_betreff,
+                    template=verifikation_template,
                 )
                 now = datetime.now().isoformat(timespec="seconds")
                 db.execute(
@@ -705,6 +714,8 @@ def settings_save():
         "warn_days", "pruefungstypen", "archiv_tage", "script_intervall",
         "email_betreff", "email_template",
         "zusammenfassung_betreff", "zusammenfassung_template",
+        "verifikation_betreff", "verifikation_template",
+        "imap_verifikation_ordner",
     ]
     data = {k: request.form.get(k, "") for k in keys}
 
@@ -734,6 +745,23 @@ def settings_save():
                 "error",
             )
             return redirect(url_for("settings_page"))
+
+    verifikation_template = data.get("verifikation_template", "")
+    if verifikation_template:
+        try:
+            verifikation_template.format(vorname="X", nachname="X")
+        except (KeyError, ValueError, IndexError) as e:
+            flash(
+                f"Ungültiger Platzhalter im Verifikations-Template: {e}. "
+                "Erlaubt sind: {vorname}, {nachname}",
+                "error",
+            )
+            return redirect(url_for("settings_page"))
+
+    imap_ordner = data.get("imap_verifikation_ordner", "")
+    if imap_ordner and re.search(r'[\r\n"\\]', imap_ordner):
+        flash("Ungültiger IMAP-Ordnername: keine Zeilenumbrüche oder Anführungszeichen erlaubt.", "error")
+        return redirect(url_for("settings_page"))
 
     save_settings(data)
 

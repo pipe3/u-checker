@@ -368,3 +368,32 @@ def test_email_pruefung_seite_hat_alle_auswaehlen_button(client, tmp_path):
     response = client.get("/email-pruefung")
     html = response.data.decode("utf-8")
     assert "Alle auswählen" in html or "alle" in html.lower()
+
+
+def test_senden_nutzt_verifikation_betreff_und_template_aus_db(client, tmp_path):
+    """send_verifikationsmail erhält konfigurierten Betreff und Template aus den Einstellungen."""
+    client.get("/")
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "script_intervall": "wöchentlich",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "Test-Verifikations-Betreff",
+        "verifikation_template": "Hallo {vorname} {nachname}, Test-Inhalt.",
+        "imap_verifikation_ordner": "test-ordner",
+    })
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max@example.com", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>") as mock_send:
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001"]})
+
+    mock_send.assert_called_once()
+    kwargs = mock_send.call_args.kwargs
+    assert kwargs.get("betreff") == "Test-Verifikations-Betreff"
+    assert kwargs.get("template") == "Hallo {vorname} {nachname}, Test-Inhalt."
