@@ -32,6 +32,11 @@
     .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
     .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
     .badge.zero { background: #6c757d; }
+    .filter-leiste { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .filter-btn { padding: 0.25rem 0.7rem; background: #e9ecef; color: #495057; border: 1px solid #ced4da; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+    .filter-btn:hover { background: #dee2e6; }
+    .filter-btn-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .pruef-item { display: block; }
   </style>
 </head>
 <body>
@@ -63,11 +68,20 @@
     {# Vorschau-Zustand: Analyse abgeschlossen #}
 
     {% if vorschau %}
+    {% if filter_typen %}
+    <div class="filter-leiste" id="filter-leiste">
+      <button type="button" class="filter-btn filter-btn-aktiv" data-typ="">Alle</button>
+      {% for typ, anzahl in filter_typen | dictsort %}
+      <button type="button" class="filter-btn" data-typ="{{ typ }}">{{ typ }} ({{ anzahl }})</button>
+      {% endfor %}
+    </div>
+    {% endif %}
     <div class="toolbar">
       <button type="button" onclick="alleAuswaehlen()">Alle auswählen</button>
     </div>
     <form action="/faelligkeiten/senden" method="post">
       <input type="hidden" name="xls_dateiname" value="{{ xls_dateiname or '' }}">
+      <input type="hidden" name="filter_typ" id="filter_typ" value="">
       <table>
         <thead>
           <tr>
@@ -80,16 +94,17 @@
         </thead>
         <tbody>
           {% for row in vorschau %}
-          <tr>
+          <tr data-typen='{{ row.pruefungen | map(attribute="typ") | list | tojson }}'>
             <td style="width:2rem;text-align:center;">
               <input type="checkbox" name="pers_nr" value="{{ row.pers_nr }}" id="cb_{{ row.pers_nr }}">
             </td>
             <td>{{ row.name }}</td>
             <td>
               {% for pr in row.pruefungen %}
-              <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
-              <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
-              {% if not loop.last %}<br>{% endif %}
+              <span class="pruef-item" data-typ="{{ pr.typ }}">
+                <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
+                <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
+              </span>
               {% endfor %}
             </td>
             <td style="white-space:nowrap;">{{ row.fruehestes_datum | datum_de }}</td>
@@ -166,10 +181,35 @@
 
   <script>
     function alleAuswaehlen() {
-      const checkboxen = document.querySelectorAll('input[name="pers_nr"]');
-      const alleAngehakt = Array.from(checkboxen).every(cb => cb.checked);
+      const checkboxen = Array.from(document.querySelectorAll('input[name="pers_nr"]'))
+        .filter(cb => cb.closest('tr').style.display !== 'none');
+      const alleAngehakt = checkboxen.length > 0 && checkboxen.every(cb => cb.checked);
       checkboxen.forEach(cb => { cb.checked = !alleAngehakt; });
     }
+
+    function filterTyp(typ) {
+      document.getElementById('filter_typ').value = typ;
+
+      document.querySelectorAll('tbody tr').forEach(row => {
+        const typen = JSON.parse(row.dataset.typen || '[]');
+        if (!typ || typen.includes(typ)) {
+          row.style.display = '';
+          row.querySelectorAll('[data-typ]').forEach(el => {
+            el.style.display = (!typ || el.dataset.typ === typ) ? 'block' : 'none';
+          });
+        } else {
+          row.style.display = 'none';
+        }
+      });
+
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.classList.toggle('filter-btn-aktiv', btn.dataset.typ === typ);
+      });
+    }
+
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => filterTyp(btn.dataset.typ));
+    });
   </script>
 </body>
 </html>

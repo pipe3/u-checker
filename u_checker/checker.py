@@ -39,10 +39,11 @@ class Person:
     nachname: str
     email: str
     pruefungen: List[Pruefung] = field(default_factory=list)
+    cc_force: bool = field(default=False, compare=False, repr=False)
 
     @property
     def hat_abgelaufene(self) -> bool:
-        return any(p.status == "abgelaufen" for p in self.pruefungen)
+        return self.cc_force or any(p.status == "abgelaufen" for p in self.pruefungen)
 
 
 def _xl_to_date(wb: xlrd.Book, val) -> Optional[date]:

@@ -932,7 +932,11 @@ def faelligkeiten_senden():
         for person in ausgewaehlte:
             passende = [p for p in person.pruefungen if p.typ == filter_typ]
             if passende:
-                gefiltert.append(_dc_replace(person, pruefungen=passende))
+                gefiltert.append(_dc_replace(
+                    person,
+                    pruefungen=passende,
+                    cc_force=person.hat_abgelaufene,
+                ))
         ausgewaehlte = gefiltert
         if not ausgewaehlte:
             flash("Keine Personen mit dem gewählten Prüfungstyp unter den Ausgewählten.", "error")

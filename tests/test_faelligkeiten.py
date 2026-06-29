@@ -467,3 +467,160 @@ def test_analyse_uebergibt_xls_dateiname_an_template(client, tmp_path):
 
     assert 'name="xls_dateiname"' in html
     assert 'value="export.xls"' in html
+
+
+# --- Filter-Buttons (#35) ---
+
+def test_analyse_zeigt_filter_buttons_mit_typen_und_zaehlern(client, tmp_path):
+    """Nach der Analyse erscheinen Filter-Buttons mit Typ und Mitglieder-Anzahl."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25")]),
+        _person("002", "Anna", "Schmidt", [_warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])):
+        html = client.post("/faelligkeiten/analyse").data.decode()
+
+    assert "G25" in html
+    assert "G26" in html
+    assert "(1)" in html
+
+
+def test_analyse_filter_typen_zaehlen_personen_nicht_pruefungen(client, tmp_path):
+    """G25 (2) wenn zwei Personen je eine G25-Prüfung haben."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25")]),
+        _person("002", "Anna", "Schmidt", [_abgelaufen("G25"), _warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])):
+        html = client.post("/faelligkeiten/analyse").data.decode()
+
+    assert "G25" in html
+    assert "G26" in html
+    assert "(2)" in html
+    assert "(1)" in html
+
+
+def test_analyse_alle_button_vorhanden(client, tmp_path):
+    """'Alle'-Button erscheint immer in der Filter-Leiste."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [_person("001", "Max", "Muster", [_abgelaufen("G25")])]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])):
+        html = client.post("/faelligkeiten/analyse").data.decode()
+
+    assert "Alle" in html
+
+
+def test_analyse_filter_hidden_field_vorhanden(client, tmp_path):
+    """Formular enthält ein hidden-Field filter_typ für den Versand."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [_person("001", "Max", "Muster", [_abgelaufen("G25")])]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])):
+        html = client.post("/faelligkeiten/analyse").data.decode()
+
+    assert 'name="filter_typ"' in html
+
+
+# --- Gefilterter Versand (#35) ---
+
+def test_senden_mit_filter_typ_sendet_nur_gefilterte_pruefungen(client, tmp_path):
+    """filter_typ=G26 → send_notifications erhält nur G26-Prüfungen."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25"), _warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])), \
+         patch("web.app.send_notifications", return_value=1) as mock_send, \
+         patch("web.app.send_summary"):
+        client.post("/faelligkeiten/senden",
+                    data={"pers_nr": ["001"], "filter_typ": "G26"})
+
+    aufgerufen_mit = mock_send.call_args[0][0]
+    assert len(aufgerufen_mit) == 1
+    typen = [p.typ for p in aufgerufen_mit[0].pruefungen]
+    assert typen == ["G26"]
+    assert "G25" not in typen
+
+
+def test_senden_mit_filter_typ_schreibt_nur_gefilterte_erinnerungen(client, tmp_path):
+    """Nach gefiltertem Versand enthält erinnerungen nur den gefilterten Typ."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25"), _warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])), \
+         patch("web.app.send_notifications", return_value=1), \
+         patch("web.app.send_summary"):
+        client.post("/faelligkeiten/senden",
+                    data={"pers_nr": ["001"], "filter_typ": "G26"})
+
+    with app.app_context():
+        app.config["DATA_DIR"] = tmp_path
+        with closing(get_db()) as db:
+            rows = db.execute("SELECT pruefungstyp FROM erinnerungen").fetchall()
+
+    typen = [r["pruefungstyp"] for r in rows]
+    assert typen == ["G26"]
+    assert "G25" not in typen
+
+
+def test_senden_ohne_filter_typ_verhalt_sich_wie_bisher(client, tmp_path):
+    """Kein filter_typ → alle Prüfungstypen werden gesendet (bisheriges Verhalten)."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25"), _warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])), \
+         patch("web.app.send_notifications", return_value=1) as mock_send, \
+         patch("web.app.send_summary"):
+        client.post("/faelligkeiten/senden", data={"pers_nr": ["001"]})
+
+    aufgerufen_mit = mock_send.call_args[0][0]
+    typen = {p.typ for p in aufgerufen_mit[0].pruefungen}
+    assert typen == {"G25", "G26"}
+
+
+def test_senden_mit_filter_typ_cc_force_bei_gemischtem_status(client, tmp_path):
+    """Bei filter_typ=G26 und G25=abgelaufen bleibt hat_abgelaufene=True → CC feuert."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25"), _warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])), \
+         patch("web.app.send_notifications", return_value=1) as mock_send, \
+         patch("web.app.send_summary"):
+        client.post("/faelligkeiten/senden",
+                    data={"pers_nr": ["001"], "filter_typ": "G26"})
+
+    aufgerufen_mit = mock_send.call_args[0][0]
+    assert len(aufgerufen_mit) == 1
+    assert aufgerufen_mit[0].hat_abgelaufene is True
+
+
+def test_senden_mit_filter_typ_schliesst_personen_ohne_matching_aus(client, tmp_path):
+    """Person ohne G26 wird bei filter_typ=G26 nicht an send_notifications übergeben."""
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    persons = [
+        _person("001", "Max", "Muster", [_abgelaufen("G25")]),
+        _person("002", "Anna", "Schmidt", [_warnung("G26")]),
+    ]
+
+    with patch("web.app._analyse_faelligkeiten", return_value=(persons, [])), \
+         patch("web.app.send_notifications", return_value=1) as mock_send, \
+         patch("web.app.send_summary"):
+        client.post("/faelligkeiten/senden",
+                    data={"pers_nr": ["001", "002"], "filter_typ": "G26"})
+
+    aufgerufen_mit = mock_send.call_args[0][0]
+    pers_nrs = [p.pers_nr for p in aufgerufen_mit]
+    assert "002" in pers_nrs
+    assert "001" not in pers_nrs
