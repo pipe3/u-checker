@@ -188,3 +188,134 @@ def test_archiv_cleanup_behaelt_offene_tasks(tmp_path):
         row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
         db.close()
         assert row is not None
+
+
+# ── Löschen (Spam) ──────────────────────────────────────────────────────────
+
+def test_loeschen_button_auf_nachweise_karte(client, tmp_path):
+    _insert_task(tmp_path, status="NEU")
+    response = client.get("/nachweise")
+    assert b"loeschen" in response.data.lower()
+
+
+def test_loeschen_entfernt_task_aus_db(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="NEU")
+    response = client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row is None
+
+
+def test_loeschen_task_nicht_mehr_auf_nachweise(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="NEU")
+    client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+    response = client.get("/nachweise")
+    assert b"Testnachweis G25" not in response.data
+
+
+def test_loeschen_task_nicht_im_archiv(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="NEU")
+    client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+    response = client.get("/archiv")
+    assert b"Testnachweis G25" not in response.data
+
+
+def test_loeschen_unbekannte_id_gibt_404(client):
+    response = client.post("/tasks/9999/loeschen")
+    assert response.status_code == 404
+
+
+def test_loeschen_erledigt_task_gibt_404(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="ERLEDIGT")
+    response = client.post(f"/tasks/{task_id}/loeschen")
+    assert response.status_code == 404
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row is not None
+
+
+# ── Wieder öffnen ────────────────────────────────────────────────────────────
+
+def test_wiederoeffnen_button_im_archiv(client, tmp_path):
+    _insert_task(tmp_path, status="ERLEDIGT")
+    response = client.get("/archiv")
+    assert b"wiederoeffnen" in response.data.lower()
+
+
+def test_wiederoeffnen_setzt_erledigt_am_auf_null(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="ERLEDIGT",
+                           erledigt_am=datetime.now().isoformat(timespec="seconds"))
+    response = client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT erledigt_am FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["erledigt_am"] is None
+
+
+def test_wiederoeffnen_erscheint_auf_nachweise(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="ERLEDIGT",
+                           erledigt_am=datetime.now().isoformat(timespec="seconds"))
+    client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+    response = client.get("/nachweise")
+    assert b"Testnachweis G25" in response.data
+
+
+def test_wiederoeffnen_nicht_mehr_im_archiv(client, tmp_path):
+    task_id = _insert_task(tmp_path, status="ERLEDIGT",
+                           erledigt_am=datetime.now().isoformat(timespec="seconds"))
+    client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+    response = client.get("/archiv")
+    assert b"Testnachweis G25" not in response.data
+
+
+def test_wiederoeffnen_unbekannte_id_gibt_404(client):
+    response = client.post("/tasks/9999/wiederoeffnen")
+    assert response.status_code == 404
+
+
+def test_wiederoeffnen_ohne_mitglied_setzt_unklare_zuordnung(client, tmp_path):
+    """Task ohne Mitglied-Zuordnung erhält beim Wiedereröffnen UNKLARE_ZUORDNUNG zurück."""
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.execute("""
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff, mitglied_nr, erledigt_am)
+        VALUES ('ERLEDIGT', ?, 'sender@example.com', 'Testnachweis G25', NULL, ?)
+    """, (datetime.now().isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")))
+    db.commit()
+    task_id = db.execute("SELECT id FROM tasks ORDER BY id DESC LIMIT 1").fetchone()[0]
+    db.close()
+
+    client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "UNKLARE_ZUORDNUNG"
+
+
+def test_wiederoeffnen_mit_mitglied_setzt_neu(client, tmp_path):
+    """Task mit gesetzter Mitglied-Nummer erhält beim Wiedereröffnen NEU zurück."""
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.execute("""
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff, mitglied_nr, erledigt_am)
+        VALUES ('ERLEDIGT', ?, 'sender@example.com', 'Testnachweis G25', '12345', ?)
+    """, (datetime.now().isoformat(timespec="seconds"), datetime.now().isoformat(timespec="seconds")))
+    db.commit()
+    task_id = db.execute("SELECT id FROM tasks ORDER BY id DESC LIMIT 1").fetchone()[0]
+    db.close()
+
+    client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "NEU"

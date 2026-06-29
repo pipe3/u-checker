@@ -186,6 +186,12 @@
             {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
             <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Re-Analyse</button>
           </form>
+
+          <form action="/tasks/{{ task['id'] }}/loeschen" method="post" style="margin:0;"
+                onsubmit="return confirm('Aufgabe unwiderruflich löschen?');">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;background:#dc3545;">Löschen</button>
+          </form>
         </div>
       </div>
 

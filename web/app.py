@@ -411,6 +411,37 @@ def task_reanalyse(task_id: int):
     return redirect(_nachweise_url())
 
 
+@app.route("/tasks/<int:task_id>/loeschen", methods=["POST"])
+def task_loeschen(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute(
+            "SELECT id FROM tasks WHERE id = ? AND status IN ('NEU', 'UNKLARE_ZUORDNUNG')",
+            (task_id,),
+        ).fetchone()
+        if row is None:
+            abort(404)
+        db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        db.commit()
+    flash("Aufgabe gelöscht.", "success")
+    return redirect(_nachweise_url())
+
+
+@app.route("/tasks/<int:task_id>/wiederoeffnen", methods=["POST"])
+def task_wiederoeffnen(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT mitglied_nr FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404)
+        new_status = "NEU" if row["mitglied_nr"] else "UNKLARE_ZUORDNUNG"
+        db.execute(
+            "UPDATE tasks SET status = ?, erledigt_am = NULL WHERE id = ?",
+            (new_status, task_id),
+        )
+        db.commit()
+    flash("Aufgabe wieder geöffnet.", "success")
+    return redirect(url_for("nachweise"))
+
+
 @app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
 def task_erledigt(task_id: int):
     now = datetime.now().isoformat(timespec="seconds")
