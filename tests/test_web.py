@@ -420,3 +420,110 @@ def test_nachweise_pdf_anhang_reanalyse_buttons(client, tmp_path):
     assert f"/tasks/{task_id}/anhang/" in body
     assert f"/tasks/{task_id}/reanalyse" in body
 
+
+# --- /nachweise?typ=: Issue #31 ---
+
+def test_filter_chip_alle_vorhanden(client, tmp_path):
+    """'Alle'-Chip ist immer vorhanden, auch wenn keine Prüfungstypen in der DB sind."""
+    client.get("/")
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "Alle" in body
+
+
+def test_filter_chips_aus_db_typen_generiert(client, tmp_path):
+    """Filter-Chips werden dynamisch aus den in der DB vorhandenen Prüfungstypen generiert."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G25")
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G26")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "G25" in body
+    assert "G26" in body
+
+
+def test_filter_nach_typ_zeigt_nur_passende_karten(client, tmp_path):
+    """GET /nachweise?typ=G25 zeigt nur Karten mit pruefungstyp G25."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G25", betreff="G25-Nachweis")
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G26", betreff="G26-Nachweis")
+
+    response = client.get("/nachweise?typ=G25")
+    body = response.data.decode()
+    assert "G25-Nachweis" in body
+    assert "G26-Nachweis" not in body
+
+
+def test_filter_ohne_parameter_zeigt_alle_tasks(client, tmp_path):
+    """GET /nachweise ohne Parameter zeigt alle offenen Tasks."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G25", betreff="G25-Nachweis")
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G26", betreff="G26-Nachweis")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "G25-Nachweis" in body
+    assert "G26-Nachweis" in body
+
+
+def test_aktiver_chip_hervorgehoben(client, tmp_path):
+    """Der aktive Filter-Chip trägt eine eigene CSS-Klasse."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G25")
+
+    response = client.get("/nachweise?typ=G25")
+    body = response.data.decode()
+    assert "chip-aktiv" in body
+
+
+def test_alle_chip_aktiv_ohne_parameter(client, tmp_path):
+    """'Alle'-Chip trägt chip-aktiv-Klasse wenn kein Filter gesetzt ist."""
+    client.get("/")
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    # Alle-Chip mit chip-aktiv-Klasse muss in einem Element gemeinsam vorkommen
+    assert 'chip-aktiv' in body
+    # Prüfen dass der Alle-Link chip-aktiv trägt: href=/nachweise und chip-aktiv müssen nahe beieinander sein
+    import re
+    alle_chip = re.search(r'href="/nachweise"[^>]*chip-aktiv|chip-aktiv[^"]*"[^>]*href="/nachweise"', body)
+    assert alle_chip is not None, "Alle-Chip hat keine chip-aktiv-Klasse"
+
+
+def test_filter_chip_ist_direkt_verlinkbar(client, tmp_path):
+    """Filter-Chips sind Links mit ?typ=... Query-Parameter."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp="G25")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert 'href="/nachweise?typ=G25"' in body
+
+
+def test_filter_ignoriert_erledigte_tasks(client, tmp_path):
+    """ERLEDIGT-Tasks erscheinen auch bei passendem Filter nicht."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="ERLEDIGT", pruefungstyp="G25", betreff="Erledigter G25")
+
+    response = client.get("/nachweise?typ=G25")
+    body = response.data.decode()
+    assert "Erledigter G25" not in body
+
+
+def test_filter_chips_nur_bei_vorhandenen_typen(client, tmp_path):
+    """Wenn kein Task einen Prüfungstyp hat, erscheinen keine Typ-Chips."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", pruefungstyp=None, betreff="Typ unbekannt")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    # Kein spezifischer Typ-Chip – nur Alle-Chip
+    assert 'href="/nachweise?typ=' not in body
+

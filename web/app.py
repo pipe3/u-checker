@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from dataclasses import replace as _dc_replace
+
 from flask import Flask, Response, abort, current_app, flash, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
@@ -289,18 +291,43 @@ def index():
     )
 
 
+def _nachweise_url() -> str:
+    """Redirect-Ziel für /nachweise, erhält aktiven ?typ=-Filter aus dem POST-Formular."""
+    typ = request.form.get("typ", "").strip()
+    return url_for("nachweise", typ=typ) if typ else url_for("nachweise")
+
+
 @app.route("/nachweise")
 def nachweise():
+    typ_filter = request.args.get("typ", "").strip()
+    _base = "SELECT * FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
     with closing(get_db()) as db:
-        tasks = db.execute(
-            "SELECT * FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG') ORDER BY empfangen_am DESC"
+        typen_rows = db.execute(
+            "SELECT DISTINCT pruefungstyp FROM tasks"
+            " WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG') AND pruefungstyp IS NOT NULL"
+            " ORDER BY pruefungstyp"
         ).fetchall()
+        if typ_filter:
+            tasks = db.execute(
+                _base + " AND pruefungstyp = ? ORDER BY empfangen_am DESC",
+                (typ_filter,),
+            ).fetchall()
+        else:
+            tasks = db.execute(_base + " ORDER BY empfangen_am DESC").fetchall()
+
+    verfuegbare_typen = [r["pruefungstyp"] for r in typen_rows]
 
     members = []
     if _xls_path().exists() and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
         members = load_members_from_xls(str(_xls_path()))
 
-    return render_template("nachweise.html", tasks=tasks, members=members)
+    return render_template(
+        "nachweise.html",
+        tasks=tasks,
+        members=members,
+        verfuegbare_typen=verfuegbare_typen,
+        aktiver_typ=typ_filter,
+    )
 
 
 @app.route("/tasks/<int:task_id>/zuordnen", methods=["POST"])
@@ -308,14 +335,14 @@ def task_zuordnen(task_id: int):
     pers_nr = request.form.get("pers_nr", "").strip()
     if not pers_nr:
         flash("Bitte ein Mitglied auswählen.", "error")
-        return redirect(url_for("nachweise"))
+        return redirect(_nachweise_url())
 
     from web.extractor import load_members_from_xls
     members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
     mitglied = next((m for m in members if m["pers_nr"] == pers_nr), None)
     if not mitglied:
         flash("Mitglied nicht gefunden.", "error")
-        return redirect(url_for("nachweise"))
+        return redirect(_nachweise_url())
 
     mitglied_name = f"{mitglied['vorname']} {mitglied['nachname']}"
     with closing(get_db()) as db:
@@ -328,7 +355,7 @@ def task_zuordnen(task_id: int):
         db.commit()
 
     flash(f"Mitglied \"{mitglied_name}\" zugeordnet.", "success")
-    return redirect(url_for("nachweise"))
+    return redirect(_nachweise_url())
 
 
 @app.route("/tasks/<int:task_id>/reanalyse", methods=["POST"])
@@ -339,7 +366,7 @@ def task_reanalyse(task_id: int):
             abort(404)
         if not row["raw_email"]:
             flash("Kein gespeichertes E-Mail für Re-Analyse vorhanden.", "error")
-            return redirect(url_for("nachweise"))
+            return redirect(_nachweise_url())
 
         import email as email_lib
         from web.extractor import extract_from_email, load_members_from_xls, _iter_dokument_parts
@@ -381,7 +408,7 @@ def task_reanalyse(task_id: int):
         db.commit()
 
     flash("Re-Analyse abgeschlossen.", "success")
-    return redirect(url_for("nachweise"))
+    return redirect(_nachweise_url())
 
 
 @app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
@@ -397,7 +424,7 @@ def task_erledigt(task_id: int):
         )
         db.commit()
     flash("Aufgabe als erledigt markiert.", "success")
-    return redirect(url_for("nachweise"))
+    return redirect(_nachweise_url())
 
 
 def _task_dateiname(row, suffix: str = "", ext: str = "pdf") -> str:
@@ -818,6 +845,7 @@ def faelligkeiten():
         vorschau=None,
         ohne_email=[],
         verlauf=_get_verlauf(),
+        filter_typen={},
     )
 
 
@@ -838,6 +866,15 @@ def faelligkeiten_analyse():
         return redirect(url_for("faelligkeiten"))
 
     vorschau = _personen_zu_vorschau(personen)
+
+    filter_typen: dict = {}
+    for row in vorschau:
+        seen: set = set()
+        for pr in row["pruefungen"]:
+            if pr["typ"] not in seen:
+                filter_typen[pr["typ"]] = filter_typen.get(pr["typ"], 0) + 1
+                seen.add(pr["typ"])
+
     return render_template(
         "faelligkeiten.html",
         xls_vorhanden=True,
@@ -845,6 +882,7 @@ def faelligkeiten_analyse():
         ohne_email=ohne_email,
         verlauf=_get_verlauf(),
         xls_dateiname=_current_xls_dateiname(),
+        filter_typen=filter_typen,
     )
 
 
@@ -887,6 +925,18 @@ def faelligkeiten_senden():
     if not ausgewaehlte:
         flash("Keine der ausgewählten Personen hat offene Fälligkeiten.", "error")
         return redirect(url_for("faelligkeiten"))
+
+    filter_typ = request.form.get("filter_typ", "").strip()
+    if filter_typ:
+        gefiltert = []
+        for person in ausgewaehlte:
+            passende = [p for p in person.pruefungen if p.typ == filter_typ]
+            if passende:
+                gefiltert.append(_dc_replace(person, pruefungen=passende))
+        ausgewaehlte = gefiltert
+        if not ausgewaehlte:
+            flash("Keine Personen mit dem gewählten Prüfungstyp unter den Ausgewählten.", "error")
+            return redirect(url_for("faelligkeiten"))
 
     try:
         emails_gesendet = send_notifications(

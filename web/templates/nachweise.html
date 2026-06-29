@@ -94,6 +94,12 @@
     .anhang-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
     .anhang-links a { font-size: 0.78rem; color: #0d6efd; text-decoration: none; }
     .anhang-links a:hover { text-decoration: underline; }
+
+    .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+    .chip { display: inline-block; padding: 0.3rem 0.85rem; border-radius: 1rem; background: #e9ecef; color: #333; text-decoration: none; font-size: 0.85rem; border: 1px solid #dee2e6; }
+    .chip:hover { background: #d3d9df; }
+    .chip-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+    .chip-aktiv:hover { background: #0b5ed7; }
   </style>
 </head>
 <body>
@@ -109,6 +115,13 @@
   {% for category, message in get_flashed_messages(with_categories=true) %}
   <div class="flash {{ category }}">{{ message }}</div>
   {% endfor %}
+
+  <div class="filter-chips">
+    <a href="{{ url_for('nachweise') }}" class="chip {% if not aktiver_typ %}chip-aktiv{% endif %}">Alle</a>
+    {% for typ in verfuegbare_typen %}
+    <a href="{{ url_for('nachweise', typ=typ) }}" class="chip {% if aktiver_typ == typ %}chip-aktiv{% endif %}">{{ typ }}</a>
+    {% endfor %}
+  </div>
 
   {% if tasks %}
   <div class="karten-liste">
@@ -140,11 +153,13 @@
         <div class="karte-aktionen">
           {% if task["status"] == "NEU" %}
           <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
             <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
           </form>
           {% elif task["status"] == "UNKLARE_ZUORDNUNG" %}
           {% if members %}
           <form action="/tasks/{{ task['id'] }}/zuordnen" method="post">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
             <div class="zuordnen-zeile">
               <select name="pers_nr" class="mitglied-select" required>
                 <option value="">Mitglied wählen …</option>
@@ -157,6 +172,7 @@
           </form>
           {% else %}
           <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
             <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
           </form>
           {% endif %}
@@ -167,6 +183,7 @@
           {% endif %}
 
           <form action="/tasks/{{ task['id'] }}/reanalyse" method="post" style="margin:0;">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
             <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Re-Analyse</button>
           </form>
         </div>
