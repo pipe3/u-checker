@@ -67,6 +67,7 @@
       <button type="button" onclick="alleAuswaehlen()">Alle auswählen</button>
     </div>
     <form action="/faelligkeiten/senden" method="post">
+      <input type="hidden" name="xls_dateiname" value="{{ xls_dateiname or '' }}">
       <table>
         <thead>
           <tr>
@@ -132,6 +133,34 @@
       </form>
     </div>
 
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Verlauf</h2>
+    {% if verlauf %}
+    <table>
+      <thead>
+        <tr>
+          <th>Datum</th>
+          <th>Name</th>
+          <th>Prüfungstyp</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in verlauf %}
+        <tr>
+          <td style="white-space:nowrap;">{{ e.gesendet_am[:10] | datum_de }}</td>
+          <td>{{ e.mitglied_name }}</td>
+          <td>{{ e.pruefungstyp }}</td>
+          <td class="status-{{ e.status }}">{{ e.status }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="empty">Noch keine Erinnerungen versendet.</p>
     {% endif %}
   </section>
 

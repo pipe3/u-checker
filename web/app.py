@@ -157,6 +157,17 @@ def init_db():
                 verifikationsmail_message_id TEXT
             )
         """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS erinnerungen (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                gesendet_am TEXT NOT NULL,
+                pers_nr TEXT NOT NULL,
+                mitglied_name TEXT NOT NULL,
+                pruefungstyp TEXT NOT NULL,
+                status TEXT NOT NULL,
+                faelligkeitsdatum TEXT
+            )
+        """)
         _migrate_tasks(db)
         _migrate_settings(db)
         db.commit()
@@ -896,10 +907,28 @@ def _personen_zu_vorschau(personen: list) -> list:
     return rows
 
 
+def _get_verlauf() -> list:
+    with closing(get_db()) as db:
+        return db.execute(
+            "SELECT * FROM erinnerungen ORDER BY gesendet_am DESC, id DESC"
+        ).fetchall()
+
+
+def _current_xls_dateiname() -> Optional[str]:
+    name_file = _xls_name_path()
+    return name_file.read_text(encoding="utf-8").strip() if name_file.exists() else None
+
+
 @app.route("/faelligkeiten")
 def faelligkeiten():
     xls_vorhanden = _xls_path().exists()
-    return render_template("faelligkeiten.html", xls_vorhanden=xls_vorhanden, vorschau=None, ohne_email=[])
+    return render_template(
+        "faelligkeiten.html",
+        xls_vorhanden=xls_vorhanden,
+        vorschau=None,
+        ohne_email=[],
+        verlauf=_get_verlauf(),
+    )
 
 
 @app.route("/faelligkeiten/analyse", methods=["POST"])
@@ -924,7 +953,94 @@ def faelligkeiten_analyse():
         xls_vorhanden=True,
         vorschau=vorschau,
         ohne_email=ohne_email,
+        verlauf=_get_verlauf(),
+        xls_dateiname=_current_xls_dateiname(),
     )
+
+
+@app.route("/faelligkeiten/senden", methods=["POST"])
+def faelligkeiten_senden():
+    pers_nrs = set(request.form.getlist("pers_nr"))
+    if not pers_nrs:
+        flash("Keine Personen ausgewählt.", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    if not _xls_path().exists():
+        flash("Keine XLS-Datei vorhanden. Bitte zuerst hochladen.", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    # Schutz gegen TOCTOU: XLS-Datei muss dieselbe sein wie beim Analyse-Schritt.
+    erwarteter_name = request.form.get("xls_dateiname", "")
+    aktueller_name = _current_xls_dateiname() or ""
+    if erwarteter_name and aktueller_name != erwarteter_name:
+        flash("Die XLS-Datei wurde seit der letzten Analyse ausgetauscht. Bitte erneut analysieren.", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    cfg = get_settings()
+    warn_days = _safe_int(cfg.get("warn_days"), 90)
+    pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
+    smtp_config = _build_smtp_config(cfg)
+    kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
+    zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
+    email_betreff = cfg.get("email_betreff") or _DEFAULT_EMAIL_BETREFF
+    email_template = cfg.get("email_template") or _DEFAULT_EMAIL_TEMPLATE
+    zusammenfassung_betreff = cfg.get("zusammenfassung_betreff") or _DEFAULT_ZUSAMMENFASSUNG_BETREFF
+    zusammenfassung_template = cfg.get("zusammenfassung_template") or _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
+
+    try:
+        personen, _ = _analyse_faelligkeiten(str(_xls_path()), warn_days, pruefungstypen)
+    except Exception as e:
+        flash(f"Fehler beim Analysieren: {e}", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    ausgewaehlte = [p for p in personen if p.pers_nr in pers_nrs]
+    if not ausgewaehlte:
+        flash("Keine der ausgewählten Personen hat offene Fälligkeiten.", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    try:
+        emails_gesendet = send_notifications(
+            ausgewaehlte,
+            dry_run=False,
+            smtp_config=smtp_config,
+            kommandanten_cc=kommandanten_cc,
+            email_betreff=email_betreff,
+            email_template=email_template,
+        )
+        send_summary(
+            ausgewaehlte,
+            dry_run=False,
+            smtp_config=smtp_config,
+            zusammenfassung_an=zusammenfassung_an,
+            zusammenfassung_betreff=zusammenfassung_betreff,
+            zusammenfassung_template=zusammenfassung_template,
+        )
+
+        gesendet_am = datetime.now().isoformat(timespec="seconds")
+        with closing(get_db()) as db:
+            for person in ausgewaehlte:
+                for pruefung in person.pruefungen:
+                    db.execute(
+                        """INSERT INTO erinnerungen
+                           (gesendet_am, pers_nr, mitglied_name, pruefungstyp, status, faelligkeitsdatum)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            gesendet_am,
+                            person.pers_nr,
+                            f"{person.vorname} {person.nachname}",
+                            pruefung.typ,
+                            pruefung.status,
+                            pruefung.datum.isoformat(),
+                        ),
+                    )
+            db.commit()
+    except Exception as e:
+        logger.exception("Fehler beim Versenden")
+        flash(f"Fehler beim Versenden: {e}", "error")
+        return redirect(url_for("faelligkeiten"))
+
+    flash(f"{emails_gesendet} E-Mail(s) versendet.", "success")
+    return redirect(url_for("faelligkeiten"))
 
 
 if __name__ == "__main__":
