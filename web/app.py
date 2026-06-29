@@ -271,7 +271,6 @@ def _ensure_db():
 @app.route("/")
 def index():
     with closing(get_db()) as db:
-        tasks = db.execute("SELECT * FROM tasks ORDER BY empfangen_am DESC").fetchall()
         offene_tasks_count = db.execute(
             "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
         ).fetchone()[0]
@@ -282,18 +281,26 @@ def index():
         if name_file.exists():
             xls_dateiname = name_file.read_text(encoding="utf-8").strip()
 
-    members = []
-    if xls_vorhanden and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
-        members = load_members_from_xls(str(_xls_path()))
-
     return render_template(
         "index.html",
-        tasks=tasks,
         offene_tasks_count=offene_tasks_count,
         xls_vorhanden=xls_vorhanden,
         xls_dateiname=xls_dateiname,
-        members=members,
     )
+
+
+@app.route("/nachweise")
+def nachweise():
+    with closing(get_db()) as db:
+        tasks = db.execute(
+            "SELECT * FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG') ORDER BY empfangen_am DESC"
+        ).fetchall()
+
+    members = []
+    if _xls_path().exists() and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
+        members = load_members_from_xls(str(_xls_path()))
+
+    return render_template("nachweise.html", tasks=tasks, members=members)
 
 
 @app.route("/tasks/<int:task_id>/zuordnen", methods=["POST"])
@@ -301,14 +308,14 @@ def task_zuordnen(task_id: int):
     pers_nr = request.form.get("pers_nr", "").strip()
     if not pers_nr:
         flash("Bitte ein Mitglied auswählen.", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("nachweise"))
 
     from web.extractor import load_members_from_xls
     members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
     mitglied = next((m for m in members if m["pers_nr"] == pers_nr), None)
     if not mitglied:
         flash("Mitglied nicht gefunden.", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("nachweise"))
 
     mitglied_name = f"{mitglied['vorname']} {mitglied['nachname']}"
     with closing(get_db()) as db:
@@ -321,7 +328,7 @@ def task_zuordnen(task_id: int):
         db.commit()
 
     flash(f"Mitglied \"{mitglied_name}\" zugeordnet.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("nachweise"))
 
 
 @app.route("/tasks/<int:task_id>/reanalyse", methods=["POST"])
@@ -332,7 +339,7 @@ def task_reanalyse(task_id: int):
             abort(404)
         if not row["raw_email"]:
             flash("Kein gespeichertes E-Mail für Re-Analyse vorhanden.", "error")
-            return redirect(url_for("index"))
+            return redirect(url_for("nachweise"))
 
         import email as email_lib
         from web.extractor import extract_from_email, load_members_from_xls, _iter_dokument_parts
@@ -374,7 +381,7 @@ def task_reanalyse(task_id: int):
         db.commit()
 
     flash("Re-Analyse abgeschlossen.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("nachweise"))
 
 
 @app.route("/tasks/<int:task_id>/erledigt", methods=["POST"])
@@ -390,7 +397,7 @@ def task_erledigt(task_id: int):
         )
         db.commit()
     flash("Aufgabe als erledigt markiert.", "success")
-    return redirect(url_for("index"))
+    return redirect(url_for("nachweise"))
 
 
 def _task_dateiname(row, suffix: str = "", ext: str = "pdf") -> str:

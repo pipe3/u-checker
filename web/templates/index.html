@@ -37,11 +37,12 @@
 <body>
   <h1>Untersuchungs-Checker</h1>
   <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
+    <a href="/nachweise" style="color:#0d6efd;text-decoration:none;">Eingehende Nachweise</a>
     <a href="/faelligkeiten" style="color:#0d6efd;text-decoration:none;">Fälligkeiten</a>
     <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
     <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
     <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
-    <span>Offene Aufgaben: <span class="badge {% if offene_tasks_count == 0 %}zero{% endif %}">{{ offene_tasks_count }}</span></span>
+    <a href="/nachweise" style="text-decoration:none;">Offene Aufgaben: <span class="badge {% if offene_tasks_count == 0 %}zero{% endif %}">{{ offene_tasks_count }}</span></a>
   </nav>
 
   {% for category, message in get_flashed_messages(with_categories=true) %}
@@ -64,124 +65,5 @@
     {% endif %}
   </section>
 
-  <section>
-    <h2>Eingehende Nachweise</h2>
-    {% if tasks %}
-    <table>
-      <thead>
-        <tr>
-          <th>Empfangen</th>
-          <th>Von / Mitglied</th>
-          <th>Betreff</th>
-          <th>Erkannt</th>
-          <th>Anhänge</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for task in tasks %}
-        <tr>
-          <td style="white-space:nowrap;">{{ task["empfangen_am"] | replace("T", " ") }}</td>
-          <td>
-            {% if task["mitglied_name"] %}
-              <strong>{{ task["mitglied_name"] }}</strong><br>
-              <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
-            {% else %}
-              {% if task["von_name"] %}<strong>{{ task["von_name"] }}</strong><br>{% endif %}
-              <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
-            {% endif %}
-          </td>
-          <td>
-            {{ task["betreff"] or "–" }}
-            {% if task["hinweis"] %}
-            <br><span class="hinweis">{{ task["hinweis"] }}</span>
-            {% endif %}
-          </td>
-          <td style="font-size:0.85rem;">
-            {% if task["pruefungstyp"] %}<strong>{{ task["pruefungstyp"] }}</strong>{% else %}–{% endif %}
-            {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] | datum_de }}{% endif %}
-            {% if task["raw_text"] %}
-            <br><details style="margin-top:0.3rem;">
-              <summary style="cursor:pointer;font-size:0.75rem;color:#0d6efd;">OCR-Text</summary>
-              <pre style="font-size:0.72rem;white-space:pre-wrap;background:#f8f9fa;border:1px solid #dee2e6;border-radius:3px;padding:0.4rem;margin:0.3rem 0 0;max-height:200px;overflow-y:auto;">{{ task["raw_text"] }}</pre>
-            </details>
-            {% endif %}
-          </td>
-          <td style="text-align:center;">
-            {{ task["anhang_count"] or 0 }}
-            {% if task["anhang_count"] and task["anhang_count"] > 0 %}
-            {% for i in range(task["anhang_count"]) %}
-            <br><span style="white-space:nowrap;">
-              <a href="#" onclick="zeigeAnhang('/tasks/{{ task['id'] }}/anhang/{{ i }}'); return false;"
-                 style="font-size:0.75rem;color:#0d6efd;">Anhang {{ i + 1 }}</a>
-              <a href="/tasks/{{ task['id'] }}/anhang/{{ i }}/download"
-                 style="font-size:0.75rem;color:#6c757d;" title="Herunterladen">↓</a>
-            </span>
-            {% endfor %}
-            {% endif %}
-          </td>
-          <td class="status-{{ task['status'] }}">{{ task["status"] | replace("_", " ") }}</td>
-          <td style="display:flex;flex-direction:column;gap:4px;align-items:flex-start;">
-            {% if task["status"] == "UNKLARE_ZUORDNUNG" %}
-            {% if members %}
-            <form action="/tasks/{{ task['id'] }}/zuordnen" method="post" style="margin:0;display:flex;gap:4px;align-items:center;">
-              <select name="pers_nr" class="mitglied-select" required>
-                <option value="">Mitglied wählen …</option>
-                {% for m in members %}
-                <option value="{{ m.pers_nr }}">{{ m.nachname }}, {{ m.vorname }}</option>
-                {% endfor %}
-              </select>
-              <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem;">Zuordnen</button>
-            </form>
-            {% else %}
-            <form action="/tasks/{{ task['id'] }}/erledigt" method="post" style="margin:0;">
-              <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem;">Erledigt</button>
-            </form>
-            {% endif %}
-            {% elif task["status"] == "NEU" %}
-            <form action="/tasks/{{ task['id'] }}/erledigt" method="post" style="margin:0;">
-              <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.2rem 0.6rem;">Erledigt</button>
-            </form>
-            {% endif %}
-            {% if task["raw_email"] %}
-            <a href="/tasks/{{ task['id'] }}/pdf" style="display:inline-block;padding:0.2rem 0.6rem;background:#198754;color:#fff;border-radius:4px;text-decoration:none;font-size:0.8rem;">PDF</a>
-            {% endif %}
-            {% if task["raw_email"] %}
-            <form action="/tasks/{{ task['id'] }}/reanalyse" method="post" style="margin:0;">
-              <button type="submit" class="secondary" style="font-size:0.75rem;padding:0.15rem 0.5rem;background:#6c757d;">Re-Analyse</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="empty">Keine Nachweise eingegangen.</p>
-    {% endif %}
-  </section>
-
-  <!-- Anhang-Vorschau Modal -->
-  <div id="anhang-modal" onclick="if(event.target===this)schliesseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:6px;width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;">
-      <div style="display:flex;justify-content:flex-end;padding:0.4rem 0.6rem;border-bottom:1px solid #ddd;">
-        <button onclick="schliesseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#555;padding:0 0.4rem;">&times;</button>
-      </div>
-      <iframe id="anhang-frame" src="" style="flex:1;border:none;width:100%;"></iframe>
-    </div>
-  </div>
-  <script>
-    function zeigeAnhang(url) {
-      document.getElementById('anhang-frame').src = url;
-      const m = document.getElementById('anhang-modal');
-      m.style.display = 'flex';
-    }
-    function schliesseModal() {
-      document.getElementById('anhang-modal').style.display = 'none';
-      document.getElementById('anhang-frame').src = '';
-    }
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') schliesseModal(); });
-  </script>
 </body>
 </html>

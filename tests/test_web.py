@@ -67,9 +67,11 @@ def test_upload_speichert_originalen_dateinamen(client, tmp_path):
 
 # --- Task-Liste ---
 
-def test_index_zeigt_tasks_bereich(client):
+def test_index_zeigt_keine_tasks_sektion(client):
+    """Tasks-Sektion wurde aus der Startseite entfernt – sie lebt jetzt auf /nachweise."""
     response = client.get("/")
-    assert b"Eingehende Nachweise" in response.data
+    # Der Nav-Link darf bleiben; die h2-Überschrift darf nicht mehr auf dem Dashboard stehen
+    assert b"<h2>Eingehende Nachweise" not in response.data
 
 
 def test_index_zeigt_badge_mit_null_wenn_keine_tasks(client):
@@ -238,4 +240,183 @@ def test_smtp_test_fehlermeldung_bei_smtp_fehler(client, tmp_path):
     assert response.status_code == 200
     body = response.data.decode("utf-8")
     assert "Verbindungsfehler" in body or "SMTP" in body
+
+
+# --- /nachweise: Issue #30 ---
+
+import sqlite3 as _sqlite3
+from datetime import datetime as _dt
+
+
+def _db_insert_task(db_path, **kwargs):
+    """Hilfsfunktion: Task in die Test-DB einfügen."""
+    defaults = {
+        "status": "NEU",
+        "empfangen_am": _dt.now().isoformat(timespec="seconds"),
+        "von_email": "sender@example.com",
+        "betreff": "Test-Nachweis",
+        "pruefungstyp": None,
+        "faelligkeitsdatum": None,
+        "mitglied_name": None,
+        "mitglied_nr": None,
+        "raw_email": None,
+        "raw_text": None,
+        "anhang_count": 0,
+    }
+    defaults.update(kwargs)
+    db = _sqlite3.connect(db_path)
+    cursor = db.execute(
+        """INSERT INTO tasks
+           (status, empfangen_am, von_email, betreff,
+            pruefungstyp, faelligkeitsdatum, mitglied_name, mitglied_nr,
+            raw_email, raw_text, anhang_count)
+           VALUES (:status, :empfangen_am, :von_email, :betreff,
+                   :pruefungstyp, :faelligkeitsdatum, :mitglied_name, :mitglied_nr,
+                   :raw_email, :raw_text, :anhang_count)""",
+        defaults,
+    )
+    task_id = cursor.lastrowid
+    db.commit()
+    db.close()
+    return task_id
+
+
+def test_index_badge_ist_link_zu_nachweise(client):
+    """Badge 'Offene Aufgaben' auf der Startseite ist ein Link zu /nachweise."""
+    response = client.get("/")
+    body = response.data.decode()
+    assert 'href="/nachweise"' in body
+
+
+def test_nachweise_in_navigation(client):
+    """/nachweise erscheint in der Navigation der Startseite."""
+    response = client.get("/")
+    assert b"/nachweise" in response.data
+
+
+def test_nachweise_erreichbar(client):
+    """GET /nachweise gibt HTTP 200 zurück."""
+    response = client.get("/nachweise")
+    assert response.status_code == 200
+
+
+def test_nachweise_zeigt_nur_offene_tasks(client, tmp_path):
+    """Nur NEU und UNKLARE_ZUORDNUNG erscheinen – ERLEDIGT nicht."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", betreff="Offener Nachweis")
+    _db_insert_task(db_path, status="UNKLARE_ZUORDNUNG", betreff="Unklarer Nachweis")
+    _db_insert_task(db_path, status="ERLEDIGT", betreff="Erledigter Nachweis")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "Offener Nachweis" in body
+    assert "Unklarer Nachweis" in body
+    assert "Erledigter Nachweis" not in body
+
+
+def test_nachweise_karte_zeigt_mitglied_pruefungstyp_datum(client, tmp_path):
+    """Karte zeigt Mitglied, Prüfungstyp und Fälligkeitsdatum prominent."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(
+        db_path,
+        status="NEU",
+        mitglied_name="Max Mustermann",
+        pruefungstyp="G25",
+        faelligkeitsdatum="2025-06-30",
+    )
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "Max Mustermann" in body
+    assert "G25" in body
+    assert "2025" in body  # Datum irgendwie enthalten
+
+
+def test_nachweise_karte_neu_css_klasse(client, tmp_path):
+    """NEU-Karten tragen die CSS-Klasse karte-neu."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU")
+
+    response = client.get("/nachweise")
+    assert b"karte-neu" in response.data
+
+
+def test_nachweise_karte_unklare_zuordnung_css_klasse(client, tmp_path):
+    """UNKLARE_ZUORDNUNG-Karten tragen die CSS-Klasse karte-unklare-zuordnung."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="UNKLARE_ZUORDNUNG")
+
+    response = client.get("/nachweise")
+    assert b"karte-unklare-zuordnung" in response.data
+
+
+def test_nachweise_karte_ocr_rohtext_aufklappbar(client, tmp_path):
+    """OCR-Rohtext ist in einem aufklappbaren Element vorhanden."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="NEU", raw_text="Erkannter Text aus OCR")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "<details" in body
+    assert "Erkannter Text aus OCR" in body
+
+
+def test_nachweise_erledigt_button_auf_neu_karten(client, tmp_path):
+    """Erledigt-Button erscheint auf NEU-Karten."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/erledigt" in body
+
+
+def test_nachweise_zuordnen_dropdown_auf_unklare_karten(client, tmp_path):
+    """Zuordnen-Dropdown erscheint auf UNKLARE_ZUORDNUNG-Karten wenn XLS vorhanden."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="UNKLARE_ZUORDNUNG")
+
+    # Dummy-XLS damit members geladen werden; echte XLS-Datei wird gemockt
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.app.load_members_from_xls", return_value=[
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Mustermann"}
+    ]):
+        response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/zuordnen" in body
+
+
+def test_nachweise_unklare_zuordnung_fallback_erledigt_ohne_xls(client, tmp_path):
+    """UNKLARE_ZUORDNUNG-Karte zeigt Erledigt-Fallback wenn kein XLS geladen ist."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="UNKLARE_ZUORDNUNG")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/erledigt" in body
+
+
+def test_nachweise_pdf_anhang_reanalyse_buttons(client, tmp_path):
+    """PDF, Anhang-Link und Re-Analyse-Button sind auf Karten vorhanden."""
+    import email as _email_lib
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+
+    # raw_email nötig für PDF und Anhang
+    raw = b"From: test@example.com\r\nSubject: Test\r\n\r\nBody"
+    task_id = _db_insert_task(db_path, status="NEU", raw_email=raw, anhang_count=1)
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/pdf" in body
+    assert f"/tasks/{task_id}/anhang/" in body
+    assert f"/tasks/{task_id}/reanalyse" in body
 
