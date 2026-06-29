@@ -18,17 +18,11 @@
     button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
     button:disabled { background: #adb5bd; cursor: not-allowed; }
     button.secondary { background: #6c757d; }
-    label.dry-run { font-size: 0.85rem; color: #555; display: flex; align-items: center; gap: 0.3rem; }
     .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
     table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
     th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
     td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
     tr:last-child td { border-bottom: none; }
-    .status-fertig    { color: #155724; font-weight: 600; }
-    .status-fehler    { color: #721c24; font-weight: 600; }
-    .status-laufend   { color: #856404; }
-    .status-blockiert { color: #6c3483; font-weight: 600; }
-    .dry-run-badge { font-size: 0.75rem; background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px; padding: 0 4px; color: #856404; }
     .error-msg { color: #721c24; font-size: 0.8rem; }
     p.empty { color: #888; font-size: 0.9rem; }
     .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
@@ -43,6 +37,7 @@
 <body>
   <h1>Untersuchungs-Checker</h1>
   <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
+    <a href="/faelligkeiten" style="color:#0d6efd;text-decoration:none;">Fälligkeiten</a>
     <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
     <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
     <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
@@ -66,19 +61,6 @@
     </form>
     {% else %}
     <p class="meta">Noch keine Datei hochgeladen.</p>
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Fälligkeiten prüfen</h2>
-    <form action="/run" method="post">
-      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Jetzt prüfen</button>
-      <label class="dry-run">
-        <input type="checkbox" name="dry_run" value="1"> Vorschau (kein Versand)
-      </label>
-    </form>
-    {% if not xls_vorhanden %}
-    <p class="meta">Bitte zuerst eine XLS-Datei hochladen.</p>
     {% endif %}
   </section>
 
@@ -180,44 +162,6 @@
     {% endif %}
   </section>
 
-  <section>
-    <h2>Lauf-Historie</h2>
-    {% if runs %}
-    <table>
-      <thead>
-        <tr>
-          <th>Zeitstempel</th>
-          <th>Status</th>
-          <th>Personen</th>
-          <th>E-Mails</th>
-          <th>Datei / Hinweis</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for run in runs %}
-        <tr>
-          <td>{{ run["gestartet_am"] | replace("T", " ") }}</td>
-          <td class="status-{{ run['status'] }}">
-            {{ run["status"] }}
-            {% if run["dry_run"] %}<span class="dry-run-badge">Vorschau</span>{% endif %}
-          </td>
-          <td>{{ run["personen_gefunden"] if run["personen_gefunden"] is not none else "–" }}</td>
-          <td>{{ run["emails_gesendet"] if run["emails_gesendet"] is not none else "–" }}</td>
-          <td>
-            {% if run["fehlermeldung"] %}
-            <span class="error-msg">{{ run["fehlermeldung"] }}</span>
-            {% else %}
-            {{ run["xls_dateiname"] or "–" }}
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="empty">Noch keine Läufe.</p>
-    {% endif %}
-  </section>
   <!-- Anhang-Vorschau Modal -->
   <div id="anhang-modal" onclick="if(event.target===this)schliesseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
     <div style="background:#fff;border-radius:6px;width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;">

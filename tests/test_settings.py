@@ -136,9 +136,12 @@ def test_index_hat_link_zu_settings(client):
     assert "/settings" in html
 
 
-# --- /run nutzt DB-Einstellungen ---
+# --- /faelligkeiten/senden nutzt DB-Einstellungen ---
 
-def test_run_nutzt_warn_days_aus_db(client, tmp_path):
+def test_senden_nutzt_warn_days_aus_db(client, tmp_path):
+    from datetime import date, timedelta
+    from u_checker.checker import Person, Pruefung
+
     client.post("/settings", data={
         "smtp_host": "",
         "smtp_port": "587",
@@ -155,19 +158,23 @@ def test_run_nutzt_warn_days_aus_db(client, tmp_path):
     xls_path = tmp_path / "latest.xls"
     xls_path.write_bytes(b"dummy")
 
-    captured_kwargs = {}
+    person = Person(pers_nr="001", vorname="T", nachname="T", email="t@t.de", pruefungen=[
+        Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
+    ])
+    captured_analyse = {}
 
-    def mock_check(filepath, **kwargs):
-        captured_kwargs.update(kwargs)
-        return []
+    def mock_analyse(xls_path, warn_days, pruefungstypen):
+        captured_analyse["warn_days"] = warn_days
+        captured_analyse["pruefungstypen"] = pruefungstypen
+        return [person], []
 
-    with patch("web.app.check_examinations", side_effect=mock_check), \
+    with patch("web.app._analyse_faelligkeiten", side_effect=mock_analyse), \
          patch("web.app.send_notifications", return_value=0), \
          patch("web.app.send_summary"):
-        client.post("/run", data={})
+        client.post("/faelligkeiten/senden", data={"pers_nr": "001", "xls_dateiname": ""})
 
-    assert captured_kwargs.get("warn_days") == 120
-    assert captured_kwargs.get("pruefungstypen") == ["G25", "G26"]
+    assert captured_analyse.get("warn_days") == 120
+    assert captured_analyse.get("pruefungstypen") == ["G25", "G26"]
 
 
 # --- E-Mail-Template (Issue #16) ---
@@ -316,7 +323,10 @@ def test_settings_zusammenfassung_standardwerte_ohne_db(client):
     assert "Übersicht" in html
 
 
-def test_run_nutzt_zusammenfassung_template_aus_db(client, tmp_path):
+def test_senden_nutzt_zusammenfassung_template_aus_db(client, tmp_path):
+    from datetime import date, timedelta
+    from u_checker.checker import Person, Pruefung
+
     client.post("/settings", data={
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
@@ -329,49 +339,54 @@ def test_run_nutzt_zusammenfassung_template_aus_db(client, tmp_path):
     xls_path = tmp_path / "latest.xls"
     xls_path.write_bytes(b"dummy")
 
+    person = Person(pers_nr="001", vorname="T", nachname="T", email="t@t.de", pruefungen=[
+        Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
+    ])
     captured_kwargs = {}
 
     def mock_summary(persons, **kwargs):
         captured_kwargs.update(kwargs)
 
-    with patch("web.app.check_examinations", return_value=[]), \
+    with patch("web.app._analyse_faelligkeiten", return_value=([person], [])), \
          patch("web.app.send_notifications", return_value=0), \
          patch("web.app.send_summary", side_effect=mock_summary):
-        client.post("/run", data={})
+        client.post("/faelligkeiten/senden", data={"pers_nr": "001", "xls_dateiname": ""})
 
     assert captured_kwargs.get("zusammenfassung_betreff") == "Test-Zusammenfassung-Betreff"
     assert "Test {datum}" in captured_kwargs.get("zusammenfassung_template", "")
 
 
-def test_run_nutzt_email_template_aus_db(client, tmp_path):
+def test_senden_nutzt_email_template_aus_db(client, tmp_path):
+    from datetime import date, timedelta
+    from u_checker.checker import Person, Pruefung
+
     client.post("/settings", data={
         "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
         "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
         "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
         "email_betreff": "Test-Betreff",
-        "email_template": "Test-Template {vorname}",
+        "email_template": "Test-Template {vorname} {nachname} {pruefungen_liste}",
     })
 
     xls_path = tmp_path / "latest.xls"
     xls_path.write_bytes(b"dummy")
 
+    person = Person(pers_nr="001", vorname="T", nachname="T", email="t@t.de", pruefungen=[
+        Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
+    ])
     captured_kwargs = {}
-
-    def mock_check(filepath, **kwargs):
-        captured_kwargs.update(kwargs)
-        return []
 
     def mock_send(persons, **kwargs):
         captured_kwargs.update(kwargs)
         return 0
 
-    with patch("web.app.check_examinations", side_effect=mock_check), \
+    with patch("web.app._analyse_faelligkeiten", return_value=([person], [])), \
          patch("web.app.send_notifications", side_effect=mock_send), \
          patch("web.app.send_summary"):
-        client.post("/run", data={})
+        client.post("/faelligkeiten/senden", data={"pers_nr": "001", "xls_dateiname": ""})
 
     assert captured_kwargs.get("email_betreff") == "Test-Betreff"
-    assert captured_kwargs.get("email_template") == "Test-Template {vorname}"
+    assert captured_kwargs.get("email_template") == "Test-Template {vorname} {nachname} {pruefungen_liste}"
 
 
 # --- Verifikations-Mail-Template (Issue #21) ---

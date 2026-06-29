@@ -108,19 +108,6 @@ def init_db():
     _data_dir().mkdir(parents=True, exist_ok=True)
     with closing(get_db()) as db:
         db.execute("""
-            CREATE TABLE IF NOT EXISTS runs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                gestartet_am TEXT NOT NULL,
-                abgeschlossen_am TEXT,
-                xls_dateiname TEXT,
-                personen_gefunden INTEGER DEFAULT 0,
-                emails_gesendet INTEGER DEFAULT 0,
-                dry_run INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'laufend',
-                fehlermeldung TEXT
-            )
-        """)
-        db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL DEFAULT ''
@@ -268,69 +255,6 @@ def _build_smtp_config(cfg: dict) -> dict:
     }
 
 
-def _do_run(dry_run: bool = False) -> tuple:
-    """Lauf ausführen; schreibt immer einen DB-Eintrag, auch bei FileNotFoundError."""
-    gestartet = datetime.now().isoformat(timespec="seconds")
-    with closing(get_db()) as db:
-        cursor = db.execute(
-            "INSERT INTO runs (gestartet_am, dry_run, status) VALUES (?, ?, 'laufend')",
-            (gestartet, int(dry_run)),
-        )
-        run_id = cursor.lastrowid
-        db.commit()
-
-    try:
-        if not _xls_path().exists():
-            raise FileNotFoundError("Keine XLS-Datei vorhanden")
-
-        name_file = _xls_name_path()
-        xls_dateiname = name_file.read_text(encoding="utf-8").strip() if name_file.exists() else "latest.xls"
-
-        cfg = get_settings()
-        warn_days = _safe_int(cfg.get("warn_days"), 90)
-        pruefungstypen = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
-        smtp_config = _build_smtp_config(cfg)
-        kommandanten_cc = [e.strip() for e in (cfg.get("kommandanten_cc") or "").split(",") if e.strip()]
-        zusammenfassung_an = [e.strip() for e in (cfg.get("zusammenfassung_an") or "").split(",") if e.strip()]
-
-        email_betreff = cfg.get("email_betreff") or _DEFAULT_EMAIL_BETREFF
-        email_template = cfg.get("email_template") or _DEFAULT_EMAIL_TEMPLATE
-        zusammenfassung_betreff = cfg.get("zusammenfassung_betreff") or _DEFAULT_ZUSAMMENFASSUNG_BETREFF
-        zusammenfassung_template = cfg.get("zusammenfassung_template") or _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
-
-        persons = check_examinations(str(_xls_path()), warn_days=warn_days, pruefungstypen=pruefungstypen)
-        emails_gesendet = send_notifications(
-            persons, dry_run=dry_run, smtp_config=smtp_config, kommandanten_cc=kommandanten_cc,
-            email_betreff=email_betreff, email_template=email_template,
-        )
-        send_summary(
-            persons, dry_run=dry_run, smtp_config=smtp_config, zusammenfassung_an=zusammenfassung_an,
-            zusammenfassung_betreff=zusammenfassung_betreff, zusammenfassung_template=zusammenfassung_template,
-        )
-
-        abgeschlossen = datetime.now().isoformat(timespec="seconds")
-        with closing(get_db()) as db:
-            db.execute(
-                """UPDATE runs SET
-                   abgeschlossen_am=?, xls_dateiname=?,
-                   personen_gefunden=?, emails_gesendet=?, status='fertig'
-                   WHERE id=?""",
-                (abgeschlossen, xls_dateiname, len(persons), emails_gesendet, run_id),
-            )
-            db.commit()
-
-        return persons, emails_gesendet
-    except Exception as e:
-        abgeschlossen = datetime.now().isoformat(timespec="seconds")
-        with closing(get_db()) as db:
-            db.execute(
-                "UPDATE runs SET abgeschlossen_am=?, status='fehler', fehlermeldung=? WHERE id=?",
-                (abgeschlossen, str(e), run_id),
-            )
-            db.commit()
-        raise
-
-
 @app.before_request
 def _ensure_db():
     global _scheduler_started
@@ -347,7 +271,6 @@ def _ensure_db():
 @app.route("/")
 def index():
     with closing(get_db()) as db:
-        runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 20").fetchall()
         tasks = db.execute("SELECT * FROM tasks ORDER BY empfangen_am DESC").fetchall()
         offene_tasks_count = db.execute(
             "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
@@ -365,7 +288,6 @@ def index():
 
     return render_template(
         "index.html",
-        runs=runs,
         tasks=tasks,
         offene_tasks_count=offene_tasks_count,
         xls_vorhanden=xls_vorhanden,
@@ -782,45 +704,6 @@ def settings_smtp_test():
         port = smtp_cfg.get("port") or 587
         flash(f"SMTP-Fehler ({host}:{port}) – {type(e).__name__}: {e}", "error")
     return redirect(url_for("settings_page"))
-
-
-@app.route("/run", methods=["POST"])
-def run():
-    if not _xls_path().exists():
-        flash("Keine XLS-Datei vorhanden. Bitte zuerst hochladen.", "error")
-        return redirect(url_for("index"))
-
-    dry_run = request.form.get("dry_run") == "1"
-
-    try:
-        persons, emails = _do_run(dry_run=dry_run)
-
-        rows = []
-        for person in persons:
-            for pruefung in person.pruefungen:
-                rows.append({
-                    "name": f"{person.vorname} {person.nachname}",
-                    "beschreibung": pruefung.beschreibung,
-                    "datum": pruefung.datum,
-                    "status": pruefung.status,
-                })
-        rows.sort(key=lambda r: (0 if r["status"] == "abgelaufen" else 1, r["datum"]))
-
-        abgelaufen_count = sum(1 for p in persons if p.hat_abgelaufene)
-        warnung_count = sum(1 for p in persons if any(pr.status == "warnung" for pr in p.pruefungen))
-
-        return render_template(
-            "ergebnis.html",
-            dry_run=dry_run,
-            personen_count=len(persons),
-            abgelaufen_count=abgelaufen_count,
-            warnung_count=warnung_count,
-            emails_count=emails,
-            rows=rows,
-        )
-    except Exception as e:
-        flash(f"Fehler beim Ausführen: {e}", "error")
-        return redirect(url_for("index"))
 
 
 def _analyse_faelligkeiten(xls_path: str, warn_days: int, pruefungstypen: list) -> tuple:

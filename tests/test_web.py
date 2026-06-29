@@ -1,6 +1,4 @@
 import io
-import sqlite3
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -29,11 +27,6 @@ def test_index_erreichbar(client):
 def test_index_zeigt_kein_xls_hinweis_wenn_keine_datei(client):
     response = client.get("/")
     assert "Noch keine Datei hochgeladen" in response.data.decode()
-
-
-def test_index_zeigt_keine_laeufe_hinweis_initial(client):
-    response = client.get("/")
-    assert "Noch keine Läufe" in response.data.decode()
 
 
 # --- Upload ---
@@ -70,94 +63,6 @@ def test_upload_speichert_originalen_dateinamen(client, tmp_path):
     name_file = tmp_path / "latest_name.txt"
     assert name_file.exists()
     assert name_file.read_text(encoding="utf-8").strip() == "mp_feuer_export.xls"
-
-
-# --- Run ---
-
-def test_run_ohne_xls_zeigt_fehler(client):
-    response = client.post("/run", data={}, follow_redirects=True)
-    assert b"Keine XLS-Datei" in response.data
-
-
-def test_run_legt_db_eintrag_an(client, tmp_path):
-    xls_path = tmp_path / "latest.xls"
-    xls_path.write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]) as mock_check, \
-         patch("web.app.send_notifications", return_value=0) as mock_send, \
-         patch("web.app.send_summary") as mock_summary:
-        response = client.post("/run", data={}, follow_redirects=True)
-
-    assert response.status_code == 200
-    mock_check.assert_called_once()
-    mock_send.assert_called_once()
-
-    db = sqlite3.connect(tmp_path / "checker.db")
-    db.row_factory = sqlite3.Row
-    row = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-    db.close()
-
-    assert row["status"] == "fertig"
-    assert row["personen_gefunden"] == 0
-    assert row["emails_gesendet"] == 0
-    assert row["dry_run"] == 0
-
-
-def test_run_dry_run_speichert_flag(client, tmp_path):
-    xls_path = tmp_path / "latest.xls"
-    xls_path.write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]), \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        client.post("/run", data={"dry_run": "1"}, follow_redirects=True)
-
-    db = sqlite3.connect(tmp_path / "checker.db")
-    db.row_factory = sqlite3.Row
-    row = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-    db.close()
-
-    assert row["dry_run"] == 1
-
-
-def test_run_speichert_fehler_bei_exception(client, tmp_path):
-    xls_path = tmp_path / "latest.xls"
-    xls_path.write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", side_effect=ValueError("Testfehler")):
-        response = client.post("/run", data={}, follow_redirects=True)
-
-    assert b"Fehler" in response.data
-
-    db = sqlite3.connect(tmp_path / "checker.db")
-    db.row_factory = sqlite3.Row
-    row = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
-    db.close()
-
-    assert row["status"] == "fehler"
-    assert "Testfehler" in row["fehlermeldung"]
-
-
-def test_run_zeigt_anzahl_in_erfolgsmeldung(client, tmp_path):
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    xls_path = tmp_path / "latest.xls"
-    xls_path.write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Max", nachname="Muster", email="max@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
-        ])
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=1), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={}, follow_redirects=True)
-
-    assert b"1 Person" in response.data
-    assert b"1 E-Mail" in response.data
 
 
 # --- Task-Liste ---
@@ -228,40 +133,13 @@ def test_task_erledigt_unbekannte_id_gibt_404(client):
 
 
 
-def test_index_zeigt_neue_labels(client):
-    """UI-Labels auf der Startseite verwenden fachliche statt technische Bezeichnungen."""
+def test_index_zeigt_keine_run_elemente(client):
+    """Startseite enthält keine Run-Elemente aus dem alten /run-Flow."""
     response = client.get("/")
     body = response.data.decode("utf-8")
-    assert "Fälligkeiten prüfen" in body     # Abschnittsüberschrift
-    assert "Jetzt prüfen" in body            # Button (eigenständig von der Überschrift)
-    assert "Vorschau (kein Versand)" in body  # Checkbox-Label
     assert "Script ausführen" not in body
     assert "Dry-Run" not in body
-
-
-def test_manueller_run_route_nicht_blockiert(client, tmp_path):
-    """POST /run läuft trotz offener Tasks durch (manueller Run)."""
-    xls_path = tmp_path / "latest.xls"
-    xls_path.write_bytes(b"dummy")
-
-    # Erst eine Anfrage, um DB zu initialisieren
-    client.get("/")
-
-    import sqlite3
-    db = sqlite3.connect(tmp_path / "checker.db")
-    db.execute(
-        "INSERT INTO tasks (status, empfangen_am) VALUES ('NEU', '2026-01-01T10:00:00')"
-    )
-    db.commit()
-    db.close()
-
-    with patch("web.app.check_examinations", return_value=[]) as mock_check, \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={}, follow_redirects=True)
-
-    assert response.status_code == 200
-    mock_check.assert_called_once()
+    assert "/run" not in body
 
 
 # --- XLS löschen: Issue #12 ---
@@ -361,191 +239,3 @@ def test_smtp_test_fehlermeldung_bei_smtp_fehler(client, tmp_path):
     body = response.data.decode("utf-8")
     assert "Verbindungsfehler" in body or "SMTP" in body
 
-
-# --- Ergebnisseite: Issue #14 ---
-
-def test_run_rendert_ergebnisseite_direkt(client, tmp_path):
-    """POST /run rendert direkt ergebnis.html (status 200, kein Redirect)."""
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]), \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    assert response.status_code == 200
-
-
-def test_run_ergebnisseite_zeigt_person(client, tmp_path):
-    """Ergebnisseite zeigt Namen der betroffenen Person."""
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Max", nachname="Mustermann", email="max@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25-Untersuchung", datum=date.today() - timedelta(days=1), status="abgelaufen"),
-        ])
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=1), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    assert response.status_code == 200
-    assert b"Mustermann" in response.data
-
-
-def test_run_ergebnisseite_abgelaufen_vor_warnung(client, tmp_path):
-    """Abgelaufene Einträge erscheinen im HTML vor Warnungen (via CSS-Klasse in Tabellenzeile)."""
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Anna", nachname="Schmidt", email="anna@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25-Frist", datum=date.today() + timedelta(days=30), status="warnung"),
-        ]),
-        Person(pers_nr="002", vorname="Bob", nachname="Mueller", email="bob@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25-Ueberfaellig", datum=date.today() - timedelta(days=5), status="abgelaufen"),
-        ]),
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=2), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    # class="status-abgelaufen" / class="status-warnung" erscheinen nur in Tabellenzeilen
-    pos_abgelaufen = html.index('class="status-abgelaufen"')
-    pos_warnung = html.index('class="status-warnung"')
-    assert pos_abgelaufen < pos_warnung
-
-
-def test_run_ergebnisseite_zaehler_stimmen(client, tmp_path):
-    """Kurzübersicht-Zähler stimmen mit Mock-Daten überein."""
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Max", nachname="Muster", email="max@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
-        ]),
-        Person(pers_nr="002", vorname="Lisa", nachname="Lauf", email="lisa@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25", datum=date.today() + timedelta(days=30), status="warnung"),
-        ]),
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=2), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    assert "2 Person" in html
-    assert "1 abgelaufen" in html
-    assert "1 Warnung" in html
-    assert "2 E-Mail" in html
-
-
-def test_run_ergebnisseite_zaehler_person_mit_gemischtem_status(client, tmp_path):
-    """Person mit abgelaufener UND Warnung-Prüfung zählt in beiden Kacheln."""
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Max", nachname="Muster", email="max@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
-            Pruefung(typ="G26", beschreibung="G26", datum=date.today() + timedelta(days=30), status="warnung"),
-        ]),
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=1), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    assert "1 Person" in html
-    assert "1 abgelaufen" in html
-    assert "1 Warnung" in html
-
-
-def test_run_ergebnisseite_dry_run_kennzeichnung(client, tmp_path):
-    """Dry-Run ist auf der Ergebnisseite als 'Vorschau' gekennzeichnet."""
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]), \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={"dry_run": "1"})
-
-    html = response.data.decode("utf-8")
-    assert "Vorschau" in html
-
-
-def test_run_ergebnisseite_leer_meldung(client, tmp_path):
-    """Ergebnisseite zeigt Leermeldung wenn keine Fälligkeiten."""
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]), \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    assert "Keine Fälligkeiten" in html
-
-
-def test_run_ergebnisseite_link_zur_startseite(client, tmp_path):
-    """Ergebnisseite enthält Link zurück zur Startseite."""
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", return_value=[]), \
-         patch("web.app.send_notifications", return_value=0), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    assert 'href="/"' in html
-
-
-def test_run_ergebnisseite_keine_email_adressen(client, tmp_path):
-    """E-Mail-Adressen werden nicht auf der Ergebnisseite angezeigt."""
-    from datetime import date, timedelta
-    from u_checker.checker import Person, Pruefung
-
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    persons = [
-        Person(pers_nr="001", vorname="Max", nachname="Muster", email="max@example.com", pruefungen=[
-            Pruefung(typ="G25", beschreibung="G25", datum=date.today() - timedelta(days=1), status="abgelaufen"),
-        ]),
-    ]
-
-    with patch("web.app.check_examinations", return_value=persons), \
-         patch("web.app.send_notifications", return_value=1), \
-         patch("web.app.send_summary"):
-        response = client.post("/run", data={})
-
-    html = response.data.decode("utf-8")
-    assert "max@example.com" not in html
-
-
-def test_run_fehler_redirectet_zur_startseite(client, tmp_path):
-    """Bei Exception weiterhin Flash + Redirect zur Startseite."""
-    (tmp_path / "latest.xls").write_bytes(b"dummy")
-
-    with patch("web.app.check_examinations", side_effect=ValueError("Testfehler")):
-        response = client.post("/run", data={}, follow_redirects=True)
-
-    assert response.status_code == 200
-    assert b"Fehler" in response.data
