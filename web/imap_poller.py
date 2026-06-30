@@ -36,7 +36,14 @@ def _imap_connect(cfg: dict):
     except (TypeError, ValueError):
         pass
     imap = imaplib.IMAP4_SSL(host, port)
-    imap.login(user, password)
+    try:
+        imap.login(user, password)
+    except Exception:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+        raise
     return imap
 
 
@@ -46,7 +53,10 @@ def imap_move_to_nachweis(cfg: dict, imap_uid: str, nachweis_ordner: str) -> Non
     if imap is None:
         return
     try:
-        imap.select("INBOX")
+        status, _ = imap.select("INBOX")
+        if status != "OK":
+            logger.warning("INBOX konnte nicht selektiert werden (Status: %s)", status)
+            return
         _ensure_imap_ordner(imap, nachweis_ordner)
         uid_bytes = imap_uid.encode()
         typ, _ = imap.uid("COPY", uid_bytes, nachweis_ordner)
@@ -93,7 +103,10 @@ def imap_delete_from_inbox(cfg: dict, imap_uid: str) -> None:
     if imap is None:
         return
     try:
-        imap.select("INBOX")
+        status, _ = imap.select("INBOX")
+        if status != "OK":
+            logger.warning("INBOX konnte nicht selektiert werden (Status: %s)", status)
+            return
         uid_bytes = imap_uid.encode()
         imap.uid("STORE", uid_bytes, "+FLAGS", "\\Deleted")
         imap.expunge()
@@ -234,8 +247,7 @@ def _send_admin_notification(smtp_config: dict, admin_emails: list[str], new_cou
 def _ensure_imap_ordner(imap, folder_name: str) -> None:
     """Legt den IMAP-Ordner an, falls er noch nicht existiert."""
     _, folders = imap.list('""', folder_name)
-    exists = folders and folders[0] and folder_name.encode() in (folders[0] or b"")
-    if not exists:
+    if not (folders and folders[0]):
         imap.create(folder_name)
 
 

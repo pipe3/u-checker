@@ -449,15 +449,15 @@ def task_wiederoeffnen(task_id: int):
         message_id = row["message_id"]
         new_status = "NEU" if row["mitglied_nr"] else "UNKLARE_ZUORDNUNG"
         db.execute(
-            "UPDATE tasks SET status = ?, erledigt_am = NULL WHERE id = ?",
+            "UPDATE tasks SET status = ?, erledigt_am = NULL, imap_uid = NULL WHERE id = ?",
             (new_status, task_id),
         )
         db.commit()
 
-    if imap_uid and message_id:
+    if imap_uid and message_id and not message_id.startswith("hash:"):
         try:
             cfg = get_settings()
-            nachweis_ordner = (cfg.get("imap_nachweis_ordner") or "Nachweise").strip()
+            nachweis_ordner = cfg.get("imap_nachweis_ordner", "Nachweise").strip()
             from web.imap_poller import imap_move_to_inbox
             imap_move_to_inbox(cfg, message_id, nachweis_ordner)
         except Exception:
@@ -484,7 +484,7 @@ def task_erledigt(task_id: int):
     if imap_uid:
         try:
             cfg = get_settings()
-            nachweis_ordner = (cfg.get("imap_nachweis_ordner") or "Nachweise").strip()
+            nachweis_ordner = cfg.get("imap_nachweis_ordner", "Nachweise").strip()
             from web.imap_poller import imap_move_to_nachweis
             imap_move_to_nachweis(cfg, imap_uid, nachweis_ordner)
         except Exception:

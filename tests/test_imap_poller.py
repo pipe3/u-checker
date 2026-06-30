@@ -799,6 +799,7 @@ def test_imap_move_to_nachweis_verschiebt_email(db_app):
     from web.imap_poller import imap_move_to_nachweis
 
     mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
     mock_imap.uid.return_value = ("OK", [b""])
     mock_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "." "Nachweise"'])
 
@@ -884,6 +885,7 @@ def test_imap_delete_from_inbox_loescht_email(db_app):
     from web.imap_poller import imap_delete_from_inbox
 
     mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
     mock_imap.uid.return_value = ("OK", [b""])
 
     cfg = {
