@@ -81,6 +81,7 @@ SETTINGS_DEFAULTS = {
     "verifikation_betreff": _DEFAULT_VERIFIKATIONS_BETREFF,
     "verifikation_template": _DEFAULT_VERIFIKATIONS_TEMPLATE,
     "imap_verifikation_ordner": "u-checker-verifikation",
+    "imap_nachweis_ordner": "Nachweise",
 }
 
 
@@ -200,6 +201,7 @@ def _migrate_tasks(db):
         ("hinweis", "TEXT"),
         ("erledigt_am", "TEXT"),
         ("raw_text", "TEXT"),
+        ("imap_uid", "TEXT"),
     ]
     for col, coltype in new_cols:
         if col not in existing:
@@ -415,13 +417,22 @@ def task_reanalyse(task_id: int):
 def task_loeschen(task_id: int):
     with closing(get_db()) as db:
         row = db.execute(
-            "SELECT id FROM tasks WHERE id = ? AND status IN ('NEU', 'UNKLARE_ZUORDNUNG')",
+            "SELECT id, imap_uid FROM tasks WHERE id = ? AND status IN ('NEU', 'UNKLARE_ZUORDNUNG')",
             (task_id,),
         ).fetchone()
         if row is None:
             abort(404)
+        imap_uid = row["imap_uid"]
         db.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
         db.commit()
+
+    if imap_uid:
+        try:
+            from web.imap_poller import imap_delete_from_inbox
+            imap_delete_from_inbox(get_settings(), imap_uid)
+        except Exception:
+            logger.exception("IMAP-Löschen für Task %d fehlgeschlagen", task_id)
+
     flash("Aufgabe gelöscht.", "success")
     return redirect(_nachweise_url())
 
@@ -429,15 +440,29 @@ def task_loeschen(task_id: int):
 @app.route("/tasks/<int:task_id>/wiederoeffnen", methods=["POST"])
 def task_wiederoeffnen(task_id: int):
     with closing(get_db()) as db:
-        row = db.execute("SELECT mitglied_nr FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = db.execute(
+            "SELECT mitglied_nr, imap_uid, message_id FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
         if row is None:
             abort(404)
+        imap_uid = row["imap_uid"]
+        message_id = row["message_id"]
         new_status = "NEU" if row["mitglied_nr"] else "UNKLARE_ZUORDNUNG"
         db.execute(
             "UPDATE tasks SET status = ?, erledigt_am = NULL WHERE id = ?",
             (new_status, task_id),
         )
         db.commit()
+
+    if imap_uid and message_id:
+        try:
+            cfg = get_settings()
+            nachweis_ordner = (cfg.get("imap_nachweis_ordner") or "Nachweise").strip()
+            from web.imap_poller import imap_move_to_inbox
+            imap_move_to_inbox(cfg, message_id, nachweis_ordner)
+        except Exception:
+            logger.exception("IMAP-Move zurück in INBOX für Task %d fehlgeschlagen", task_id)
+
     flash("Aufgabe wieder geöffnet.", "success")
     return redirect(url_for("nachweise"))
 
@@ -446,14 +471,25 @@ def task_wiederoeffnen(task_id: int):
 def task_erledigt(task_id: int):
     now = datetime.now().isoformat(timespec="seconds")
     with closing(get_db()) as db:
-        row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = db.execute("SELECT id, imap_uid FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row is None:
             abort(404)
+        imap_uid = row["imap_uid"]
         db.execute(
             "UPDATE tasks SET status = 'ERLEDIGT', erledigt_am = COALESCE(erledigt_am, ?) WHERE id = ?",
             (now, task_id),
         )
         db.commit()
+
+    if imap_uid:
+        try:
+            cfg = get_settings()
+            nachweis_ordner = (cfg.get("imap_nachweis_ordner") or "Nachweise").strip()
+            from web.imap_poller import imap_move_to_nachweis
+            imap_move_to_nachweis(cfg, imap_uid, nachweis_ordner)
+        except Exception:
+            logger.exception("IMAP-Move für Task %d fehlgeschlagen", task_id)
+
     flash("Aufgabe als erledigt markiert.", "success")
     return redirect(_nachweise_url())
 
@@ -674,6 +710,7 @@ def settings_save():
         "zusammenfassung_betreff", "zusammenfassung_template",
         "verifikation_betreff", "verifikation_template",
         "imap_verifikation_ordner",
+        "imap_nachweis_ordner",
     ]
     data = {k: request.form.get(k, "") for k in keys}
 
@@ -719,6 +756,11 @@ def settings_save():
     imap_ordner = data.get("imap_verifikation_ordner", "")
     if imap_ordner and re.search(r'[\r\n"\\]', imap_ordner):
         flash("Ungültiger IMAP-Ordnername: keine Zeilenumbrüche oder Anführungszeichen erlaubt.", "error")
+        return redirect(url_for("settings_page"))
+
+    imap_nachweis = data.get("imap_nachweis_ordner", "")
+    if imap_nachweis and re.search(r'[\r\n"\\]', imap_nachweis):
+        flash("Ungültiger IMAP-Nachweis-Ordnername: keine Zeilenumbrüche oder Anführungszeichen erlaubt.", "error")
         return redirect(url_for("settings_page"))
 
     save_settings(data)

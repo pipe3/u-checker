@@ -23,17 +23,19 @@ def client(tmp_path):
         yield c
 
 
-def _insert_task(tmp_path, status="ERLEDIGT", raw_email=None, erledigt_am=None):
+def _insert_task(tmp_path, status="ERLEDIGT", raw_email=None, erledigt_am=None, imap_uid=None, message_id=None):
     db = sqlite3.connect(tmp_path / "checker.db")
     db.row_factory = sqlite3.Row
     db.execute("""
-        INSERT INTO tasks (status, empfangen_am, von_email, betreff, raw_email, erledigt_am)
-        VALUES (?, ?, 'sender@example.com', 'Testnachweis G25', ?, ?)
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff, raw_email, erledigt_am, imap_uid, message_id)
+        VALUES (?, ?, 'sender@example.com', 'Testnachweis G25', ?, ?, ?, ?)
     """, (
         status,
         datetime.now().isoformat(timespec="seconds"),
         raw_email,
         erledigt_am,
+        imap_uid,
+        message_id,
     ))
     db.commit()
     task_id = db.execute("SELECT id FROM tasks ORDER BY id DESC LIMIT 1").fetchone()["id"]
@@ -319,3 +321,142 @@ def test_wiederoeffnen_mit_mitglied_setzt_neu(client, tmp_path):
     row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
     db.close()
     assert row["status"] == "NEU"
+
+
+# ── IMAP-Sync bei Statuswechsel ─────────────────────────────────────────────
+
+def test_task_erledigt_ruft_imap_move_auf(client, tmp_path):
+    """Wenn imap_uid gesetzt ist, wird imap_move_to_nachweis aufgerufen."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid="42")
+
+    with patch("web.imap_poller.imap_move_to_nachweis") as mock_move:
+        client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+
+    mock_move.assert_called_once()
+    args = mock_move.call_args
+    assert args[0][1] == "42"
+
+
+def test_task_erledigt_ohne_uid_ueberspringt_imap(client, tmp_path):
+    """Ohne imap_uid wird kein IMAP-Aufruf gemacht."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid=None)
+
+    with patch("web.imap_poller.imap_move_to_nachweis") as mock_move:
+        response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+
+    assert response.status_code == 200
+    mock_move.assert_not_called()
+
+
+def test_task_erledigt_imap_fehler_blockiert_db_nicht(client, tmp_path):
+    """IMAP-Fehler bei erledigt verhindert nicht die DB-Aktualisierung."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid="42")
+
+    with patch("web.imap_poller.imap_move_to_nachweis", side_effect=RuntimeError("IMAP down")):
+        client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "ERLEDIGT"
+
+
+def test_task_wiederoeffnen_ruft_imap_move_auf(client, tmp_path):
+    """Wenn imap_uid und message_id gesetzt sind, wird imap_move_to_inbox aufgerufen."""
+    task_id = _insert_task(
+        tmp_path, status="ERLEDIGT",
+        imap_uid="42", message_id="<test@example.com>",
+        erledigt_am=datetime.now().isoformat(timespec="seconds"),
+    )
+
+    with patch("web.imap_poller.imap_move_to_inbox") as mock_move:
+        client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+
+    mock_move.assert_called_once()
+    args = mock_move.call_args
+    assert args[0][1] == "<test@example.com>"
+
+
+def test_task_wiederoeffnen_ohne_uid_ueberspringt_imap(client, tmp_path):
+    """Ohne imap_uid wird kein IMAP-Aufruf gemacht."""
+    task_id = _insert_task(
+        tmp_path, status="ERLEDIGT", imap_uid=None,
+        erledigt_am=datetime.now().isoformat(timespec="seconds"),
+    )
+
+    with patch("web.imap_poller.imap_move_to_inbox") as mock_move:
+        client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+
+    mock_move.assert_not_called()
+
+
+def test_task_wiederoeffnen_imap_fehler_blockiert_db_nicht(client, tmp_path):
+    """IMAP-Fehler bei wiederoeffnen verhindert nicht die DB-Aktualisierung."""
+    task_id = _insert_task(
+        tmp_path, status="ERLEDIGT",
+        imap_uid="42", message_id="<test@example.com>",
+        erledigt_am=datetime.now().isoformat(timespec="seconds"),
+    )
+
+    with patch("web.imap_poller.imap_move_to_inbox", side_effect=RuntimeError("IMAP down")):
+        client.post(f"/tasks/{task_id}/wiederoeffnen", follow_redirects=True)
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] in ("NEU", "UNKLARE_ZUORDNUNG")
+
+
+def test_task_loeschen_ruft_imap_delete_auf(client, tmp_path):
+    """Wenn imap_uid gesetzt ist, wird imap_delete_from_inbox aufgerufen."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid="99")
+
+    with patch("web.imap_poller.imap_delete_from_inbox") as mock_delete:
+        client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+
+    mock_delete.assert_called_once()
+    args = mock_delete.call_args
+    assert args[0][1] == "99"
+
+
+def test_task_loeschen_ohne_uid_ueberspringt_imap(client, tmp_path):
+    """Ohne imap_uid wird kein IMAP-Delete ausgeführt."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid=None)
+
+    with patch("web.imap_poller.imap_delete_from_inbox") as mock_delete:
+        client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+
+    mock_delete.assert_not_called()
+
+
+def test_task_loeschen_imap_fehler_blockiert_db_nicht(client, tmp_path):
+    """IMAP-Fehler bei loeschen verhindert nicht das Löschen aus der DB."""
+    task_id = _insert_task(tmp_path, status="NEU", imap_uid="99")
+
+    with patch("web.imap_poller.imap_delete_from_inbox", side_effect=RuntimeError("IMAP down")):
+        client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row is None
+
+
+def test_settings_hat_imap_nachweis_ordner_feld(client):
+    """Settings-Seite enthält das imap_nachweis_ordner Eingabefeld."""
+    response = client.get("/settings")
+    assert b"imap_nachweis_ordner" in response.data
+
+
+def test_settings_speichert_imap_nachweis_ordner(client, tmp_path):
+    """imap_nachweis_ordner wird korrekt in die DB gespeichert."""
+    client.post("/settings", data={"imap_nachweis_ordner": "Abgeschlossen"})
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT value FROM settings WHERE key = 'imap_nachweis_ordner'").fetchone()
+    db.close()
+    assert row is not None
+    assert row["value"] == "Abgeschlossen"

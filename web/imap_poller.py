@@ -6,6 +6,7 @@ import email.utils
 import hashlib
 import imaplib
 import logging
+import re
 import smtplib
 from contextlib import closing
 from datetime import datetime
@@ -16,12 +17,100 @@ from web.extractor import MATCH_THRESHOLD, extract_from_email, load_members_from
 logger = logging.getLogger(__name__)
 
 
+def _extract_uid(fetch_response_part: bytes) -> str | None:
+    """Extracts the IMAP UID from a FETCH response fragment like b'1 (UID 42 RFC822 {100})'."""
+    m = re.search(rb'UID (\d+)', fetch_response_part)
+    return m.group(1).decode() if m else None
+
+
+def _imap_connect(cfg: dict):
+    """Opens and returns an authenticated IMAP4_SSL connection, or None if not configured."""
+    host = cfg.get("imap_host", "").strip()
+    user = cfg.get("imap_user", "").strip()
+    password = cfg.get("imap_password", "").strip()
+    if not host or not user or not password:
+        return None
+    port = 993
+    try:
+        port = int(cfg.get("imap_port") or 993)
+    except (TypeError, ValueError):
+        pass
+    imap = imaplib.IMAP4_SSL(host, port)
+    imap.login(user, password)
+    return imap
+
+
+def imap_move_to_nachweis(cfg: dict, imap_uid: str, nachweis_ordner: str) -> None:
+    """Verschiebt Email von INBOX in den Nachweis-Ordner via gespeicherter UID (best-effort)."""
+    imap = _imap_connect(cfg)
+    if imap is None:
+        return
+    try:
+        imap.select("INBOX")
+        _ensure_imap_ordner(imap, nachweis_ordner)
+        uid_bytes = imap_uid.encode()
+        typ, _ = imap.uid("COPY", uid_bytes, nachweis_ordner)
+        if typ == "OK":
+            imap.uid("STORE", uid_bytes, "+FLAGS", "\\Deleted")
+            imap.expunge()
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def imap_move_to_inbox(cfg: dict, message_id: str, nachweis_ordner: str) -> None:
+    """Sucht Email im Nachweis-Ordner per Message-ID und verschiebt sie zurück in INBOX (best-effort)."""
+    imap = _imap_connect(cfg)
+    if imap is None:
+        return
+    try:
+        status, _ = imap.select(nachweis_ordner)
+        if status != "OK":
+            logger.warning("IMAP-Ordner %r nicht gefunden beim Wiedereröffnen", nachweis_ordner)
+            return
+        _, data = imap.uid("SEARCH", None, "HEADER", "Message-ID", message_id)
+        uids = data[0].split() if data[0] else []
+        if not uids:
+            logger.warning("Email mit Message-ID %r nicht in %r gefunden", message_id, nachweis_ordner)
+            return
+        uid = uids[0]
+        typ, _ = imap.uid("COPY", uid, "INBOX")
+        if typ == "OK":
+            imap.uid("STORE", uid, "+FLAGS", "\\Deleted")
+            imap.expunge()
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
+def imap_delete_from_inbox(cfg: dict, imap_uid: str) -> None:
+    """Löscht Email aus INBOX via gespeicherter UID (best-effort)."""
+    imap = _imap_connect(cfg)
+    if imap is None:
+        return
+    try:
+        imap.select("INBOX")
+        uid_bytes = imap_uid.encode()
+        imap.uid("STORE", uid_bytes, "+FLAGS", "\\Deleted")
+        imap.expunge()
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+
+
 def process_email(
     db,
     raw_bytes: bytes,
     *,
     xls_path: str | None = None,
     pruefungstypen: list[str] | None = None,
+    imap_uid: str | None = None,
 ) -> bool:
     """Parse raw email bytes, extrahiert Inhalt und speichert Task. True = neu, False = Duplikat."""
     msg = email.message_from_bytes(raw_bytes)
@@ -68,12 +157,14 @@ def process_email(
     cursor = db.execute(
         """INSERT INTO tasks
                (status, empfangen_am, von_email, von_name, betreff, message_id, raw_email,
-                anhang_count, pruefungstyp, faelligkeitsdatum, mitglied_nr, mitglied_name, raw_text)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                anhang_count, pruefungstyp, faelligkeitsdatum, mitglied_nr, mitglied_name, raw_text,
+                imap_uid)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             status, empfangen_am, von_email or None, von_name or None, betreff or None,
             dedup_key, raw_bytes, anhang_count,
             pruefungstyp, faelligkeitsdatum_str, mitglied_nr, mitglied_name, raw_text,
+            imap_uid,
         ),
     )
     task_id = cursor.lastrowid
@@ -174,7 +265,7 @@ def poll_inbox(app) -> int:
 
         # Fetch emails; keep connection open so we can mark Seen after DB commit
         imap = None
-        fetched: list[tuple[bytes, bytes]] = []  # (imap_msg_id, raw_bytes)
+        fetched: list[tuple[bytes, bytes, str | None]] = []  # (imap_msg_id, raw_bytes, imap_uid)
         try:
             imap = imaplib.IMAP4_SSL(imap_host, imap_port)
             imap.login(imap_user, imap_password)
@@ -184,10 +275,11 @@ def poll_inbox(app) -> int:
             msg_ids = data[0].split() if data[0] else []
 
             for msg_id in msg_ids:
-                _, msg_data = imap.fetch(msg_id, "(RFC822)")
+                _, msg_data = imap.fetch(msg_id, "(UID RFC822)")
                 for part in msg_data:
                     if isinstance(part, tuple):
-                        fetched.append((msg_id, part[1]))
+                        uid = _extract_uid(part[0])
+                        fetched.append((msg_id, part[1], uid))
         except Exception:
             logger.exception("IMAP-Abruf fehlgeschlagen")
             if imap:
@@ -199,10 +291,10 @@ def poll_inbox(app) -> int:
 
         # Separate Verifikationsantworten von normalen Mails
         verif_replies: list[tuple[str, bytes]] = []   # (pers_nr, imap_msg_id)
-        normal_emails: list[tuple[bytes, bytes]] = []  # (imap_msg_id, raw_bytes)
+        normal_emails: list[tuple[bytes, bytes, str | None]] = []  # (imap_msg_id, raw_bytes, imap_uid)
 
         with closing(get_db()) as db:
-            for imap_msg_id, raw in fetched:
+            for imap_msg_id, raw, uid in fetched:
                 msg = email.message_from_bytes(raw)
                 in_reply_to = (msg.get("In-Reply-To") or "").strip()
                 if in_reply_to:
@@ -213,7 +305,7 @@ def poll_inbox(app) -> int:
                     if row:
                         verif_replies.append((row["pers_nr"], imap_msg_id))
                         continue
-                normal_emails.append((imap_msg_id, raw))
+                normal_emails.append((imap_msg_id, raw, uid))
 
         # Verifikationsantworten verarbeiten: Status setzen + in Ordner verschieben
         if verif_replies:
@@ -241,14 +333,14 @@ def poll_inbox(app) -> int:
         xls_path = str(_xls_path()) if _xls_path().exists() else None
         pruefungstypen_list = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
         with closing(get_db()) as db:
-            for _, raw in normal_emails:
-                if process_email(db, raw, xls_path=xls_path, pruefungstypen=pruefungstypen_list):
+            for _, raw, uid in normal_emails:
+                if process_email(db, raw, xls_path=xls_path, pruefungstypen=pruefungstypen_list, imap_uid=uid):
                     new_count += 1
             db.commit()
 
         # Only mark Seen after successful DB commit
         try:
-            for imap_msg_id, _ in normal_emails:
+            for imap_msg_id, _, _uid in normal_emails:
                 imap.store(imap_msg_id, "+FLAGS", "\\Seen")
         except Exception:
             logger.warning("IMAP Seen-Markierung fehlgeschlagen für %d Nachrichten", len(normal_emails))

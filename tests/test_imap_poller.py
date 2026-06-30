@@ -722,3 +722,180 @@ def test_nachweis_ohne_mitglied_match_aktualisiert_verifikation_nicht(db_app):
     db.close()
     assert row["status"] == "ausstehend"
     assert row["bestaetigt_am"] is None
+
+
+# --- IMAP-UID Speicherung ---
+
+def test_poll_speichert_imap_uid(db_app):
+    """IMAP-UID aus FETCH-Antwort wird in tasks.imap_uid gespeichert."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    raw = _make_raw_email()
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 42 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings({
+            "imap_host": "imap.example.com",
+            "imap_port": "993",
+            "imap_user": "test@example.com",
+            "imap_password": "pass",
+        })
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT imap_uid FROM tasks LIMIT 1").fetchone()
+    db.close()
+    assert row["imap_uid"] == "42"
+
+
+def test_poll_speichert_keine_uid_wenn_nicht_in_antwort(db_app):
+    """imap_uid ist NULL wenn FETCH-Antwort kein UID-Fragment enthält."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    raw = _make_raw_email(message_id="<no-uid@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings({
+            "imap_host": "imap.example.com",
+            "imap_port": "993",
+            "imap_user": "test@example.com",
+            "imap_password": "pass",
+        })
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT imap_uid FROM tasks LIMIT 1").fetchone()
+    db.close()
+    assert row["imap_uid"] is None
+
+
+def test_extract_uid_parsiert_korrekt():
+    """_extract_uid extrahiert UID korrekt aus FETCH-Antwort-Fragment."""
+    from web.imap_poller import _extract_uid
+
+    assert _extract_uid(b"1 (UID 42 RFC822 {100})") == "42"
+    assert _extract_uid(b"5 (UID 1001 RFC822 {512})") == "1001"
+    assert _extract_uid(b"1 (RFC822 {100})") is None
+    assert _extract_uid(b"") is None
+
+
+# --- Hilfsfunktionen für IMAP-Statuswechsel ---
+
+def test_imap_move_to_nachweis_verschiebt_email(db_app):
+    """imap_move_to_nachweis: COPY nach Nachweis-Ordner + DELETE aus INBOX."""
+    from web.imap_poller import imap_move_to_nachweis
+
+    mock_imap = MagicMock()
+    mock_imap.uid.return_value = ("OK", [b""])
+    mock_imap.list.return_value = ("OK", [b'(\\HasNoChildren) "." "Nachweise"'])
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_move_to_nachweis(cfg, "42", "Nachweise")
+
+    mock_imap.select.assert_called_with("INBOX")
+    mock_imap.uid.assert_any_call("COPY", b"42", "Nachweise")
+    mock_imap.uid.assert_any_call("STORE", b"42", "+FLAGS", "\\Deleted")
+    mock_imap.expunge.assert_called_once()
+
+
+def test_imap_move_to_nachweis_kein_imap_konfiguriert(db_app):
+    """imap_move_to_nachweis tut nichts wenn IMAP nicht konfiguriert."""
+    from web.imap_poller import imap_move_to_nachweis
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL") as mock_ssl:
+        imap_move_to_nachweis({}, "42", "Nachweise")
+        mock_ssl.assert_not_called()
+
+
+def test_imap_move_to_inbox_sucht_per_message_id(db_app):
+    """imap_move_to_inbox: Suche per Message-ID in Nachweis-Ordner, dann COPY nach INBOX."""
+    from web.imap_poller import imap_move_to_inbox
+
+    mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
+    mock_imap.uid.side_effect = [
+        ("OK", [b"7"]),        # SEARCH response: UID 7 gefunden
+        ("OK", [b""]),         # COPY response
+        ("OK", [b""]),         # STORE response
+    ]
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_move_to_inbox(cfg, "<test-1@example.com>", "Nachweise")
+
+    mock_imap.select.assert_called_with("Nachweise")
+    mock_imap.uid.assert_any_call("SEARCH", None, "HEADER", "Message-ID", "<test-1@example.com>")
+    mock_imap.uid.assert_any_call("COPY", b"7", "INBOX")
+    mock_imap.uid.assert_any_call("STORE", b"7", "+FLAGS", "\\Deleted")
+    mock_imap.expunge.assert_called_once()
+
+
+def test_imap_move_to_inbox_email_nicht_gefunden(db_app):
+    """imap_move_to_inbox: Kein COPY wenn Email nicht im Ordner."""
+    from web.imap_poller import imap_move_to_inbox
+
+    mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
+    mock_imap.uid.return_value = ("OK", [b""])  # leeres SEARCH-Ergebnis
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_move_to_inbox(cfg, "<nicht-vorhanden@example.com>", "Nachweise")
+
+    assert not any(
+        call[0][0] == "COPY" for call in mock_imap.uid.call_args_list
+    )
+
+
+def test_imap_delete_from_inbox_loescht_email(db_app):
+    """imap_delete_from_inbox: STORE +Deleted + Expunge in INBOX."""
+    from web.imap_poller import imap_delete_from_inbox
+
+    mock_imap = MagicMock()
+    mock_imap.uid.return_value = ("OK", [b""])
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_delete_from_inbox(cfg, "99")
+
+    mock_imap.select.assert_called_with("INBOX")
+    mock_imap.uid.assert_any_call("STORE", b"99", "+FLAGS", "\\Deleted")
+    mock_imap.expunge.assert_called_once()

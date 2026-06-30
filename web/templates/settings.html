@@ -166,6 +166,11 @@
       <input type="text" id="imap_verifikation_ordner" name="imap_verifikation_ordner" value="{{ cfg.imap_verifikation_ordner }}" placeholder="u-checker-verifikation">
       <p class="hint">In diesen IMAP-Ordner werden Antworten auf Verifikationsmails verschoben.</p>
     </div>
+    <div class="field" style="max-width:350px;">
+      <label for="imap_nachweis_ordner">IMAP-Ordner für abgeschlossene Nachweise</label>
+      <input type="text" id="imap_nachweis_ordner" name="imap_nachweis_ordner" value="{{ cfg.imap_nachweis_ordner }}" placeholder="Nachweise">
+      <p class="hint">In diesen IMAP-Ordner werden erledigte Nachweis-Emails verschoben.</p>
+    </div>
 
     <button type="submit">Einstellungen speichern</button>
   </form>
