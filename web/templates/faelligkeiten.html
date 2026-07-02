@@ -1,215 +1,185 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fälligkeiten – Untersuchungs-Checker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
-    section { margin-bottom: 2rem; }
-    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-    button:disabled { background: #adb5bd; cursor: not-allowed; }
-    button.secondary { background: #6c757d; }
-    .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
-    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
-    tr:last-child td { border-bottom: none; }
-    .status-abgelaufen { color: #721c24; font-weight: 600; }
-    .status-warnung    { color: #856404; }
-    .cc-badge { font-size: 0.75rem; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 3px; padding: 0 5px; color: #721c24; font-weight: 600; }
-    p.empty { color: #888; font-size: 0.9rem; }
-    .hinweis-block { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 0.75rem 1rem; margin-top: 1.5rem; font-size: 0.875rem; }
-    .hinweis-block ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
-    .hinweis-block li { margin-bottom: 0.25rem; }
-    .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
-    .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
-    .badge.zero { background: #6c757d; }
-    .filter-leiste { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
-    .filter-btn { padding: 0.25rem 0.7rem; background: #e9ecef; color: #495057; border: 1px solid #ced4da; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
-    .filter-btn:hover { background: #dee2e6; }
-    .filter-btn-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
-    .pruef-item { display: block; }
-  </style>
-</head>
-<body>
-  <h1>Untersuchungs-Checker</h1>
-  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
-    <a href="/" style="color:#0d6efd;text-decoration:none;">Startseite</a>
-    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
-    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
-    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
-  </nav>
+{% extends "base.html" %}
+{% block title %}Fälligkeiten – Untersuchungs-Checker{% endblock %}
 
-  {% for category, message in get_flashed_messages(with_categories=true) %}
-  <div class="flash {{ category }}">{{ message }}</div>
-  {% endfor %}
+{% block extra_css %}
+<style>
+  .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
+  .status-abgelaufen { color: #721c24; font-weight: 600; }
+  .status-warnung    { color: #856404; }
+  .cc-badge { font-size: 0.75rem; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 3px; padding: 0 5px; color: #721c24; font-weight: 600; }
+  .hinweis-block { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 0.75rem 1rem; margin-top: 1.5rem; font-size: 0.875rem; }
+  .hinweis-block ul { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+  .hinweis-block li { margin-bottom: 0.25rem; }
+  .toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+  .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
+  .badge.zero { background: #6c757d; }
+  .filter-leiste { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.75rem; }
+  .filter-btn { padding: 0.25rem 0.7rem; background: #e9ecef; color: #495057; border: 1px solid #ced4da; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+  .filter-btn:hover { background: #dee2e6; }
+  .filter-btn-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+  .pruef-item { display: block; }
+  .analyse-form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+</style>
+{% endblock %}
 
-  <section>
-    <h2>Fälligkeiten analysieren</h2>
+{% block content %}
+<h1>Fälligkeiten</h1>
 
-    {% if vorschau is none %}
-    {# Leerzustand: noch keine Analyse gestartet #}
-    <form action="/faelligkeiten/analyse" method="post">
-      <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Analyse starten</button>
-    </form>
-    {% if not xls_vorhanden %}
-    <p class="meta">Keine XLS-Datei vorhanden. Bitte zuerst auf der <a href="/">Startseite</a> hochladen.</p>
-    {% endif %}
+<section>
+  <h2>Fälligkeiten analysieren</h2>
 
-    {% else %}
-    {# Vorschau-Zustand: Analyse abgeschlossen #}
+  {% if vorschau is none %}
+  <form action="/faelligkeiten/analyse" method="post" class="analyse-form">
+    <button type="submit" {% if not xls_vorhanden %}disabled{% endif %}>Analyse starten</button>
+  </form>
+  {% if not xls_vorhanden %}
+  <p class="meta">Keine XLS-Datei vorhanden. Bitte zuerst auf der <a href="/">Übersicht</a> hochladen.</p>
+  {% endif %}
 
-    {% if vorschau %}
-    {% if filter_typen %}
-    <div class="filter-leiste" id="filter-leiste">
-      <button type="button" class="filter-btn filter-btn-aktiv" data-typ="">Alle</button>
-      {% for typ, anzahl in filter_typen | dictsort %}
-      <button type="button" class="filter-btn" data-typ="{{ typ }}">{{ typ }} ({{ anzahl }})</button>
-      {% endfor %}
-    </div>
-    {% endif %}
-    <div class="toolbar">
-      <button type="button" onclick="alleAuswaehlen()">Alle auswählen</button>
-    </div>
-    <form action="/faelligkeiten/senden" method="post">
-      <input type="hidden" name="xls_dateiname" value="{{ xls_dateiname or '' }}">
-      <input type="hidden" name="filter_typ" id="filter_typ" value="">
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Name</th>
-            <th>Prüfungen</th>
-            <th>Frühestes Datum</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in vorschau %}
-          <tr data-typen='{{ row.pruefungen | map(attribute="typ") | list | tojson }}'>
-            <td style="width:2rem;text-align:center;">
-              <input type="checkbox" name="pers_nr" value="{{ row.pers_nr }}" id="cb_{{ row.pers_nr }}">
-            </td>
-            <td>{{ row.name }}</td>
-            <td>
-              {% for pr in row.pruefungen %}
-              <span class="pruef-item" data-typ="{{ pr.typ }}">
-                <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
-                <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
-              </span>
-              {% endfor %}
-            </td>
-            <td style="white-space:nowrap;">{{ row.fruehestes_datum | datum_de }}</td>
-            <td>
-              {% if row.cc_flag %}<span class="cc-badge">CC</span>{% endif %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      <div style="margin-top:1rem;">
-        <button type="submit">E-Mails senden</button>
-      </div>
-    </form>
+  {% else %}
 
-    {% else %}
-    <p class="empty">Keine Fälligkeiten gefunden.</p>
-    {% endif %}
-
-    {% if ohne_email %}
-    <div class="hinweis-block">
-      <strong>Personen ohne E-Mail-Adresse</strong> – können nicht benachrichtigt werden:
-      <ul>
-        {% for p in ohne_email %}
-        <li>
-          {{ p.name }}:
-          {% for pr in p.pruefungen %}
-          <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
-          <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
-          {% if not loop.last %}, {% endif %}
-          {% endfor %}
-        </li>
-        {% endfor %}
-      </ul>
-    </div>
-    {% endif %}
-
-    <div style="margin-top:1.5rem;">
-      <form action="/faelligkeiten/analyse" method="post" style="display:inline;">
-        <button type="submit" class="secondary">Neu analysieren</button>
-      </form>
-    </div>
-
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Verlauf</h2>
-    {% if verlauf %}
+  {% if vorschau %}
+  {% if filter_typen %}
+  <div class="filter-leiste" id="filter-leiste">
+    <button type="button" class="filter-btn filter-btn-aktiv" data-typ="">Alle</button>
+    {% for typ, anzahl in filter_typen | dictsort %}
+    <button type="button" class="filter-btn" data-typ="{{ typ }}">{{ typ }} ({{ anzahl }})</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="toolbar">
+    <button type="button" onclick="alleAuswaehlen()">Alle auswählen</button>
+  </div>
+  <form action="/faelligkeiten/senden" method="post">
+    <input type="hidden" name="xls_dateiname" value="{{ xls_dateiname or '' }}">
+    <input type="hidden" name="filter_typ" id="filter_typ" value="">
     <table>
       <thead>
         <tr>
-          <th>Datum</th>
+          <th></th>
           <th>Name</th>
-          <th>Prüfungstyp</th>
-          <th>Status</th>
+          <th>Prüfungen</th>
+          <th>Frühestes Datum</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
-        {% for e in verlauf %}
-        <tr>
-          <td style="white-space:nowrap;">{{ e.gesendet_am[:10] | datum_de }}</td>
-          <td>{{ e.mitglied_name }}</td>
-          <td>{{ e.pruefungstyp }}</td>
-          <td class="status-{{ e.status }}">{{ e.status }}</td>
+        {% for row in vorschau %}
+        <tr data-typen='{{ row.pruefungen | map(attribute="typ") | list | tojson }}'>
+          <td style="width:2rem;text-align:center;">
+            <input type="checkbox" name="pers_nr" value="{{ row.pers_nr }}" id="cb_{{ row.pers_nr }}">
+          </td>
+          <td>{{ row.name }}</td>
+          <td>
+            {% for pr in row.pruefungen %}
+            <span class="pruef-item" data-typ="{{ pr.typ }}">
+              <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
+              <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
+            </span>
+            {% endfor %}
+          </td>
+          <td style="white-space:nowrap;">{{ row.fruehestes_datum | datum_de }}</td>
+          <td>
+            {% if row.cc_flag %}<span class="cc-badge">CC</span>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    {% else %}
-    <p class="empty">Noch keine Erinnerungen versendet.</p>
-    {% endif %}
-  </section>
+    <div style="margin-top:1rem;">
+      <button type="submit">E-Mails senden</button>
+    </div>
+  </form>
 
-  <script>
-    function alleAuswaehlen() {
-      const checkboxen = Array.from(document.querySelectorAll('input[name="pers_nr"]'))
-        .filter(cb => cb.closest('tr').style.display !== 'none');
-      const alleAngehakt = checkboxen.length > 0 && checkboxen.every(cb => cb.checked);
-      checkboxen.forEach(cb => { cb.checked = !alleAngehakt; });
-    }
+  {% else %}
+  <p class="empty">Keine Fälligkeiten gefunden.</p>
+  {% endif %}
 
-    function filterTyp(typ) {
-      document.getElementById('filter_typ').value = typ;
+  {% if ohne_email %}
+  <div class="hinweis-block">
+    <strong>Personen ohne E-Mail-Adresse</strong> – können nicht benachrichtigt werden:
+    <ul>
+      {% for p in ohne_email %}
+      <li>
+        {{ p.name }}:
+        {% for pr in p.pruefungen %}
+        <span class="status-{{ pr.status }}">{{ pr.typ }}</span>
+        <span style="color:#666;font-size:0.82rem;">({{ pr.datum | datum_de }})</span>
+        {% if not loop.last %}, {% endif %}
+        {% endfor %}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
 
-      document.querySelectorAll('tbody tr').forEach(row => {
-        const typen = JSON.parse(row.dataset.typen || '[]');
-        if (!typ || typen.includes(typ)) {
-          row.style.display = '';
-          row.querySelectorAll('[data-typ]').forEach(el => {
-            el.style.display = (!typ || el.dataset.typ === typ) ? 'block' : 'none';
-          });
-        } else {
-          row.style.display = 'none';
-        }
-      });
+  <div style="margin-top:1.5rem;">
+    <form action="/faelligkeiten/analyse" method="post">
+      <button type="submit" class="secondary">Neu analysieren</button>
+    </form>
+  </div>
 
-      document.querySelectorAll('.filter-btn').forEach(btn => {
-        btn.classList.toggle('filter-btn-aktiv', btn.dataset.typ === typ);
-      });
-    }
+  {% endif %}
+</section>
 
-    document.querySelectorAll('.filter-btn').forEach(btn => {
-      btn.addEventListener('click', () => filterTyp(btn.dataset.typ));
+<section>
+  <h2>Verlauf</h2>
+  {% if verlauf %}
+  <table>
+    <thead>
+      <tr>
+        <th>Datum</th>
+        <th>Name</th>
+        <th>Prüfungstyp</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in verlauf %}
+      <tr>
+        <td style="white-space:nowrap;">{{ e.gesendet_am[:10] | datum_de }}</td>
+        <td>{{ e.mitglied_name }}</td>
+        <td>{{ e.pruefungstyp }}</td>
+        <td class="status-{{ e.status }}">{{ e.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Noch keine Erinnerungen versendet.</p>
+  {% endif %}
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  function alleAuswaehlen() {
+    const checkboxen = Array.from(document.querySelectorAll('input[name="pers_nr"]'))
+      .filter(cb => cb.closest('tr').style.display !== 'none');
+    const alleAngehakt = checkboxen.length > 0 && checkboxen.every(cb => cb.checked);
+    checkboxen.forEach(cb => { cb.checked = !alleAngehakt; });
+  }
+
+  function filterTyp(typ) {
+    document.getElementById('filter_typ').value = typ;
+    document.querySelectorAll('tbody tr').forEach(row => {
+      const typen = JSON.parse(row.dataset.typen || '[]');
+      if (!typ || typen.includes(typ)) {
+        row.style.display = '';
+        row.querySelectorAll('[data-typ]').forEach(el => {
+          el.style.display = (!typ || el.dataset.typ === typ) ? 'block' : 'none';
+        });
+      } else {
+        row.style.display = 'none';
+      }
     });
-  </script>
-</body>
-</html>
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.classList.toggle('filter-btn-aktiv', btn.dataset.typ === typ);
+    });
+  }
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => filterTyp(btn.dataset.typ));
+  });
+</script>
+{% endblock %}

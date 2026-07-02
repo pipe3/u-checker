@@ -1,89 +1,62 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Archiv – Untersuchungs-Checker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
-    section { margin-bottom: 2rem; }
-    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-    button.secondary { background: #6c757d; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
-    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
-    tr:last-child td { border-bottom: none; }
-    p.empty { color: #888; font-size: 0.9rem; }
-    a.btn { display: inline-block; padding: 0.3rem 0.8rem; background: #0d6efd; color: #fff; border-radius: 4px; text-decoration: none; font-size: 0.8rem; }
-    a.btn:hover { background: #0b5ed7; }
-  </style>
-</head>
-<body>
-  <h1>Archiv – Erledigte Nachweise</h1>
-  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
-    <a href="/" style="color:#0d6efd;text-decoration:none;">← Zurück zur Übersicht</a>
-    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
-    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
-  </nav>
+{% extends "base.html" %}
+{% block title %}Archiv – Untersuchungs-Checker{% endblock %}
 
-  {% for category, message in get_flashed_messages(with_categories=true) %}
-  <div class="flash {{ category }}">{{ message }}</div>
-  {% endfor %}
+{% block extra_css %}
+<style>
+  a.btn { display: inline-block; padding: 0.3rem 0.8rem; background: #0d6efd; color: #fff; border-radius: 4px; text-decoration: none; font-size: 0.8rem; }
+  a.btn:hover { background: #0b5ed7; }
+</style>
+{% endblock %}
 
-  <section>
-    <h2>Erledigte Aufgaben</h2>
-    {% if tasks %}
-    <table>
-      <thead>
-        <tr>
-          <th>Empfangen</th>
-          <th>Erledigt am</th>
-          <th>Mitglied / Absender</th>
-          <th>Betreff</th>
-          <th>Erkannt</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for task in tasks %}
-        <tr>
-          <td style="white-space:nowrap;font-size:0.82rem;">{{ task["empfangen_am"] | replace("T", " ") }}</td>
-          <td style="white-space:nowrap;font-size:0.82rem;">{{ task["erledigt_am"] | replace("T", " ") if task["erledigt_am"] else "–" }}</td>
-          <td>
-            {% if task["mitglied_name"] %}
-              <strong>{{ task["mitglied_name"] }}</strong><br>
-              <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
-            {% else %}
-              {% if task["von_name"] %}<strong>{{ task["von_name"] }}</strong><br>{% endif %}
-              <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
-            {% endif %}
-          </td>
-          <td>{{ task["betreff"] or "–" }}</td>
-          <td style="white-space:nowrap;font-size:0.85rem;">
-            {% if task["pruefungstyp"] %}<strong>{{ task["pruefungstyp"] }}</strong>{% else %}–{% endif %}
-            {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] | datum_de }}{% endif %}
-          </td>
-          <td style="white-space:nowrap;">
-            {% if task["raw_email"] %}
-            <a class="btn" href="/tasks/{{ task['id'] }}/pdf">PDF</a>
-            {% endif %}
-            <form action="/tasks/{{ task['id'] }}/wiederoeffnen" method="post" style="display:inline;margin:0;">
-              <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;margin-left:4px;">Wieder öffnen</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <p class="empty">Keine erledigten Aufgaben im Archiv.</p>
-    {% endif %}
-  </section>
-</body>
-</html>
+{% block content %}
+<h1>Archiv – Erledigte Nachweise</h1>
+
+<section>
+  {% if tasks %}
+  <table>
+    <thead>
+      <tr>
+        <th>Empfangen</th>
+        <th>Erledigt am</th>
+        <th>Mitglied / Absender</th>
+        <th>Betreff</th>
+        <th>Erkannt</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for task in tasks %}
+      <tr>
+        <td style="white-space:nowrap;font-size:0.82rem;">{{ task["empfangen_am"] | replace("T", " ") }}</td>
+        <td style="white-space:nowrap;font-size:0.82rem;">{{ task["erledigt_am"] | replace("T", " ") if task["erledigt_am"] else "–" }}</td>
+        <td>
+          {% if task["mitglied_name"] %}
+            <strong>{{ task["mitglied_name"] }}</strong><br>
+            <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
+          {% else %}
+            {% if task["von_name"] %}<strong>{{ task["von_name"] }}</strong><br>{% endif %}
+            <span style="font-size:0.8rem;color:#666;">{{ task["von_email"] or "–" }}</span>
+          {% endif %}
+        </td>
+        <td>{{ task["betreff"] or "–" }}</td>
+        <td style="white-space:nowrap;font-size:0.85rem;">
+          {% if task["pruefungstyp"] %}<strong>{{ task["pruefungstyp"] }}</strong>{% else %}–{% endif %}
+          {% if task["faelligkeitsdatum"] %}<br>{{ task["faelligkeitsdatum"] | datum_de }}{% endif %}
+        </td>
+        <td style="white-space:nowrap;">
+          {% if task["raw_email"] %}
+          <a class="btn" href="/tasks/{{ task['id'] }}/pdf">PDF</a>
+          {% endif %}
+          <form action="/tasks/{{ task['id'] }}/wiederoeffnen" method="post" style="display:inline;margin:0;">
+            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;margin-left:4px;">Wieder öffnen</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Keine erledigten Aufgaben im Archiv.</p>
+  {% endif %}
+</section>
+{% endblock %}

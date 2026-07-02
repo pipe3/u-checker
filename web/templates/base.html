@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Untersuchungs-Checker{% endblock %}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
+    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+    section { margin-bottom: 2rem; }
+    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+    button:disabled { background: #adb5bd; cursor: not-allowed; }
+    button.secondary { background: #6c757d; }
+    p.empty { color: #888; font-size: 0.9rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
+    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+
+    nav { margin-bottom: 1.5rem; border-bottom: 1px solid #dee2e6; padding-bottom: 0.6rem; }
+    .nav-liste { display: flex; gap: 1.5rem; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; }
+    .nav-liste a { color: #555; text-decoration: none; font-size: 0.9rem; padding-bottom: 3px; }
+    .nav-liste a:hover { color: #0d6efd; }
+    .nav-liste a.aktiv { color: #0d6efd; font-weight: 600; border-bottom: 2px solid #0d6efd; }
+  </style>
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  <nav>
+    <ul class="nav-liste">
+      <li><a href="{{ url_for('index') }}"
+             class="{% if request.endpoint == 'index' %}aktiv{% endif %}">Übersicht</a></li>
+      <li><a href="{{ url_for('nachweise') }}"
+             class="{% if request.endpoint == 'nachweise' %}aktiv{% endif %}">Eingehende Nachweise</a></li>
+      <li><a href="{{ url_for('faelligkeiten') }}"
+             class="{% if request.endpoint in ('faelligkeiten', 'faelligkeiten_analyse', 'faelligkeiten_senden') %}aktiv{% endif %}">Fälligkeiten</a></li>
+      <li><a href="{{ url_for('email_pruefung') }}"
+             class="{% if request.endpoint in ('email_pruefung', 'email_pruefung_senden') %}aktiv{% endif %}">E-Mail-Prüfung</a></li>
+      <li><a href="{{ url_for('settings_page') }}"
+             class="{% if request.endpoint in ('settings_page', 'settings_save', 'settings_imap_poll', 'settings_smtp_test') %}aktiv{% endif %}">Einstellungen</a></li>
+    </ul>
+  </nav>
+
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+  <div class="flash {{ category }}">{{ message }}</div>
+  {% endfor %}
+
+  {% block content %}{% endblock %}
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

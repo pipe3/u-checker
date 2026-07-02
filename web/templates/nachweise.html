@@ -1,243 +1,186 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Eingehende Nachweise – Untersuchungs-Checker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-    button.secondary { background: #6c757d; }
-    button.erledigt { background: #198754; }
-    p.empty { color: #888; font-size: 0.9rem; }
-    select.mitglied-select { font-size: 0.85rem; padding: 0.25rem 0.5rem; }
+{% extends "base.html" %}
+{% block title %}Eingehende Nachweise – Untersuchungs-Checker{% endblock %}
 
-    .karten-liste { display: flex; flex-direction: column; gap: 1rem; }
+{% block extra_css %}
+<style>
+  button.erledigt { background: #198754; }
+  select.mitglied-select { font-size: 0.85rem; padding: 0.25rem 0.5rem; }
 
-    .karte {
-      border: 1px solid #dee2e6;
-      border-radius: 6px;
-      padding: 1rem 1rem 1rem 1.2rem;
-      border-left-width: 5px;
-    }
-    .karte-neu { border-left-color: #0d6efd; }
-    .karte-unklare-zuordnung { border-left-color: #fd7e14; }
+  .archiv-link { font-size: 0.85rem; color: #6c757d; text-decoration: none; float: right; margin-top: 0.25rem; }
+  .archiv-link:hover { color: #0d6efd; text-decoration: underline; }
 
-    .karte-haupt {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-    .karte-info-primaer { flex: 1; min-width: 200px; }
-    .karte-info-primaer .mitglied { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.2rem; }
-    .karte-info-primaer .typ-datum { font-size: 0.95rem; color: #333; }
-    .karte-info-primaer .typ { font-weight: 600; }
+  .karten-liste { display: flex; flex-direction: column; gap: 1rem; }
+  .karte { border: 1px solid #dee2e6; border-radius: 6px; padding: 1rem 1rem 1rem 1.2rem; border-left-width: 5px; }
+  .karte-neu { border-left-color: #0d6efd; }
+  .karte-unklare-zuordnung { border-left-color: #fd7e14; }
 
-    .karte-info-sekundaer { font-size: 0.82rem; color: #555; min-width: 160px; }
-    .karte-info-sekundaer span { display: block; }
+  .karte-haupt { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  .karte-info-primaer { flex: 1; min-width: 200px; }
+  .karte-info-primaer .mitglied { font-size: 1.1rem; font-weight: 700; margin: 0 0 0.2rem; }
+  .karte-info-primaer .typ-datum { font-size: 0.95rem; color: #333; }
+  .karte-info-primaer .typ { font-weight: 600; }
 
-    .karte-aktionen {
-      display: flex;
-      flex-direction: column;
-      gap: 5px;
-      align-items: flex-start;
-      min-width: 130px;
-    }
-    .karte-aktionen form { margin: 0; }
-    .karte-aktionen a.btn-link {
-      display: inline-block;
-      padding: 0.4rem 1rem;
-      background: #198754;
-      color: #fff;
-      border-radius: 4px;
-      text-decoration: none;
-      font-size: 0.85rem;
-      white-space: nowrap;
-    }
-    .karte-aktionen .zuordnen-zeile {
-      display: flex;
-      gap: 4px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
+  .karte-info-sekundaer { font-size: 0.82rem; color: #555; min-width: 160px; }
+  .karte-info-sekundaer span { display: block; }
 
-    .karte-ocr {
-      margin-top: 0.75rem;
-      border-top: 1px solid #eee;
-      padding-top: 0.6rem;
-    }
-    details summary {
-      cursor: pointer;
-      font-size: 0.8rem;
-      color: #0d6efd;
-      user-select: none;
-    }
-    details pre {
-      font-size: 0.75rem;
-      white-space: pre-wrap;
-      background: #f8f9fa;
-      border: 1px solid #dee2e6;
-      border-radius: 3px;
-      padding: 0.5rem;
-      margin: 0.4rem 0 0;
-      max-height: 200px;
-      overflow-y: auto;
-    }
+  .karte-aktionen { display: flex; flex-direction: column; gap: 5px; align-items: flex-start; min-width: 130px; }
+  .karte-aktionen form { margin: 0; }
+  .karte-aktionen a.btn-link {
+    display: inline-block; padding: 0.4rem 1rem; background: #198754;
+    color: #fff; border-radius: 4px; text-decoration: none; font-size: 0.85rem; white-space: nowrap;
+  }
+  .karte-aktionen .zuordnen-zeile { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 
-    .anhang-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
-    .anhang-links a { font-size: 0.78rem; color: #0d6efd; text-decoration: none; }
-    .anhang-links a:hover { text-decoration: underline; }
+  .karte-ocr { margin-top: 0.75rem; border-top: 1px solid #eee; padding-top: 0.6rem; }
+  details summary { cursor: pointer; font-size: 0.8rem; color: #0d6efd; user-select: none; }
+  details pre {
+    font-size: 0.75rem; white-space: pre-wrap; background: #f8f9fa;
+    border: 1px solid #dee2e6; border-radius: 3px; padding: 0.5rem;
+    margin: 0.4rem 0 0; max-height: 200px; overflow-y: auto;
+  }
 
-    .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
-    .chip { display: inline-block; padding: 0.3rem 0.85rem; border-radius: 1rem; background: #e9ecef; color: #333; text-decoration: none; font-size: 0.85rem; border: 1px solid #dee2e6; }
-    .chip:hover { background: #d3d9df; }
-    .chip-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
-    .chip-aktiv:hover { background: #0b5ed7; }
-  </style>
-</head>
-<body>
-  <h1>Eingehende Nachweise</h1>
-  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
-    <a href="/" style="color:#0d6efd;text-decoration:none;">← Übersicht</a>
-    <a href="/faelligkeiten" style="color:#0d6efd;text-decoration:none;">Fälligkeiten</a>
-    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
-    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
-    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
-  </nav>
+  .anhang-links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .anhang-links a { font-size: 0.78rem; color: #0d6efd; text-decoration: none; }
+  .anhang-links a:hover { text-decoration: underline; }
 
-  {% for category, message in get_flashed_messages(with_categories=true) %}
-  <div class="flash {{ category }}">{{ message }}</div>
+  .filter-chips { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .chip { display: inline-block; padding: 0.3rem 0.85rem; border-radius: 1rem; background: #e9ecef; color: #333; text-decoration: none; font-size: 0.85rem; border: 1px solid #dee2e6; }
+  .chip:hover { background: #d3d9df; }
+  .chip-aktiv { background: #0d6efd; color: #fff; border-color: #0d6efd; }
+  .chip-aktiv:hover { background: #0b5ed7; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:1.5rem;">
+  <h1 style="margin:0;">Eingehende Nachweise</h1>
+  <a class="archiv-link" href="{{ url_for('archiv') }}">Erledigte anzeigen →</a>
+</div>
+
+<div class="filter-chips">
+  <a href="{{ url_for('nachweise') }}" class="chip {% if not aktiver_typ %}chip-aktiv{% endif %}">Alle</a>
+  {% for typ in verfuegbare_typen %}
+  <a href="{{ url_for('nachweise', typ=typ) }}" class="chip {% if aktiver_typ == typ %}chip-aktiv{% endif %}">{{ typ }}</a>
   {% endfor %}
+</div>
 
-  <div class="filter-chips">
-    <a href="{{ url_for('nachweise') }}" class="chip {% if not aktiver_typ %}chip-aktiv{% endif %}">Alle</a>
-    {% for typ in verfuegbare_typen %}
-    <a href="{{ url_for('nachweise', typ=typ) }}" class="chip {% if aktiver_typ == typ %}chip-aktiv{% endif %}">{{ typ }}</a>
-    {% endfor %}
-  </div>
+{% if tasks %}
+<div class="karten-liste">
+  {% for task in tasks %}
+  <div class="karte karte-{{ task['status'] | lower | replace('_', '-') }}">
+    <div class="karte-haupt">
 
-  {% if tasks %}
-  <div class="karten-liste">
-    {% for task in tasks %}
-    <div class="karte karte-{{ task['status'] | lower | replace('_', '-') }}">
-      <div class="karte-haupt">
-
-        <div class="karte-info-primaer">
-          <p class="mitglied">{{ task["mitglied_name"] or task["von_name"] or "Unbekanntes Mitglied" }}</p>
-          <div class="typ-datum">
-            {% if task["pruefungstyp"] %}
-            <span class="typ">{{ task["pruefungstyp"] }}</span>
-            {% else %}
-            <span style="color:#999;">Prüfungstyp unbekannt</span>
-            {% endif %}
-            {% if task["faelligkeitsdatum"] %}
-            &nbsp;·&nbsp;{{ task["faelligkeitsdatum"] | datum_de }}
-            {% endif %}
-          </div>
-        </div>
-
-        <div class="karte-info-sekundaer">
-          <span>{{ task["von_email"] or "–" }}</span>
-          <span>{{ task["betreff"] or "–" }}</span>
-          <span>{{ task["empfangen_am"] | datum_de }}</span>
-          <span>{{ task["anhang_count"] or 0 }} Anhang/Anhänge</span>
-        </div>
-
-        <div class="karte-aktionen">
-          {% if task["status"] == "NEU" %}
-          <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
-            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
-            <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
-          </form>
-          {% elif task["status"] == "UNKLARE_ZUORDNUNG" %}
-          {% if members %}
-          <form action="/tasks/{{ task['id'] }}/zuordnen" method="post">
-            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
-            <div class="zuordnen-zeile">
-              <select name="pers_nr" class="mitglied-select" required>
-                <option value="">Mitglied wählen …</option>
-                {% for m in members %}
-                <option value="{{ m.pers_nr }}">{{ m.nachname }}, {{ m.vorname }}</option>
-                {% endfor %}
-              </select>
-              <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Zuordnen</button>
-            </div>
-          </form>
+      <div class="karte-info-primaer">
+        <p class="mitglied">{{ task["mitglied_name"] or task["von_name"] or "Unbekanntes Mitglied" }}</p>
+        <div class="typ-datum">
+          {% if task["pruefungstyp"] %}
+          <span class="typ">{{ task["pruefungstyp"] }}</span>
           {% else %}
-          <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
-            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
-            <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
-          </form>
+          <span style="color:#999;">Prüfungstyp unbekannt</span>
           {% endif %}
+          {% if task["faelligkeitsdatum"] %}
+          &nbsp;·&nbsp;{{ task["faelligkeitsdatum"] | datum_de }}
           {% endif %}
-
-          {% if task["raw_email"] %}
-          <a class="btn-link" href="/tasks/{{ task['id'] }}/pdf">PDF</a>
-          {% endif %}
-
-          <form action="/tasks/{{ task['id'] }}/reanalyse" method="post" style="margin:0;">
-            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
-            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Re-Analyse</button>
-          </form>
-
-          <form action="/tasks/{{ task['id'] }}/loeschen" method="post" style="margin:0;"
-                onsubmit="return confirm('Aufgabe unwiderruflich löschen?');">
-            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
-            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;background:#dc3545;">Löschen</button>
-          </form>
         </div>
       </div>
 
-      {% if task["anhang_count"] and task["anhang_count"] > 0 and task["raw_email"] %}
-      <div class="anhang-links" style="margin-top:0.6rem;">
-        {% for i in range(task["anhang_count"]) %}
-        <a href="#" onclick="zeigeAnhang('/tasks/{{ task['id'] }}/anhang/{{ i }}'); return false;">Anhang {{ i + 1 }}</a>
-        <a href="/tasks/{{ task['id'] }}/anhang/{{ i }}/download" title="Herunterladen" style="color:#6c757d;">↓</a>
-        {% endfor %}
+      <div class="karte-info-sekundaer">
+        <span>{{ task["von_email"] or "–" }}</span>
+        <span>{{ task["betreff"] or "–" }}</span>
+        <span>{{ task["empfangen_am"] | datum_de }}</span>
+        <span>{{ task["anhang_count"] or 0 }} Anhang/Anhänge</span>
       </div>
-      {% endif %}
 
-      {% if task["raw_text"] %}
-      <div class="karte-ocr">
-        <details>
-          <summary>OCR-Text anzeigen</summary>
-          <pre>{{ task["raw_text"] }}</pre>
-        </details>
-      </div>
-      {% endif %}
-    </div>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="empty">Keine offenen Nachweise vorhanden.</p>
-  {% endif %}
+      <div class="karte-aktionen">
+        {% if task["status"] == "NEU" %}
+        <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
+        </form>
+        {% elif task["status"] == "UNKLARE_ZUORDNUNG" %}
+        {% if members %}
+        <form action="/tasks/{{ task['id'] }}/zuordnen" method="post">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <div class="zuordnen-zeile">
+            <select name="pers_nr" class="mitglied-select" required>
+              <option value="">Mitglied wählen …</option>
+              {% for m in members %}
+              <option value="{{ m.pers_nr }}">{{ m.nachname }}, {{ m.vorname }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Zuordnen</button>
+          </div>
+        </form>
+        {% else %}
+        <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
+        </form>
+        {% endif %}
+        {% endif %}
 
-  <div id="anhang-modal" onclick="if(event.target===this)schliesseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:#fff;border-radius:6px;width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;">
-      <div style="display:flex;justify-content:flex-end;padding:0.4rem 0.6rem;border-bottom:1px solid #ddd;">
-        <button onclick="schliesseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#555;padding:0 0.4rem;">&times;</button>
+        {% if task["raw_email"] %}
+        <a class="btn-link" href="/tasks/{{ task['id'] }}/pdf">PDF</a>
+        {% endif %}
+
+        <form action="/tasks/{{ task['id'] }}/reanalyse" method="post" style="margin:0;">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Re-Analyse</button>
+        </form>
+
+        <form action="/tasks/{{ task['id'] }}/loeschen" method="post" style="margin:0;"
+              onsubmit="return confirm('Aufgabe unwiderruflich löschen?');">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;background:#dc3545;">Löschen</button>
+        </form>
       </div>
-      <iframe id="anhang-frame" src="" style="flex:1;border:none;width:100%;"></iframe>
     </div>
+
+    {% if task["anhang_count"] and task["anhang_count"] > 0 and task["raw_email"] %}
+    <div class="anhang-links" style="margin-top:0.6rem;">
+      {% for i in range(task["anhang_count"]) %}
+      <a href="#" onclick="zeigeAnhang('/tasks/{{ task['id'] }}/anhang/{{ i }}'); return false;">Anhang {{ i + 1 }}</a>
+      <a href="/tasks/{{ task['id'] }}/anhang/{{ i }}/download" title="Herunterladen" style="color:#6c757d;">↓</a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if task["raw_text"] %}
+    <div class="karte-ocr">
+      <details>
+        <summary>OCR-Text anzeigen</summary>
+        <pre>{{ task["raw_text"] }}</pre>
+      </details>
+    </div>
+    {% endif %}
   </div>
-  <script>
-    function zeigeAnhang(url) {
-      document.getElementById('anhang-frame').src = url;
-      const m = document.getElementById('anhang-modal');
-      m.style.display = 'flex';
-    }
-    function schliesseModal() {
-      document.getElementById('anhang-modal').style.display = 'none';
-      document.getElementById('anhang-frame').src = '';
-    }
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') schliesseModal(); });
-  </script>
-</body>
-</html>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">Keine offenen Nachweise vorhanden.</p>
+{% endif %}
+
+<div id="anhang-modal" onclick="if(event.target===this)schliesseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:6px;width:90vw;max-width:900px;height:90vh;display:flex;flex-direction:column;overflow:hidden;">
+    <div style="display:flex;justify-content:flex-end;padding:0.4rem 0.6rem;border-bottom:1px solid #ddd;">
+      <button onclick="schliesseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#555;padding:0 0.4rem;">&times;</button>
+    </div>
+    <iframe id="anhang-frame" src="" style="flex:1;border:none;width:100%;"></iframe>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+  function zeigeAnhang(url) {
+    document.getElementById('anhang-frame').src = url;
+    const m = document.getElementById('anhang-modal');
+    m.style.display = 'flex';
+  }
+  function schliesseModal() {
+    document.getElementById('anhang-modal').style.display = 'none';
+    document.getElementById('anhang-frame').src = '';
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') schliesseModal(); });
+</script>
+{% endblock %}

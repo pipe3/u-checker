@@ -73,8 +73,8 @@ def test_archiv_zeigt_keine_offenen_tasks(client, tmp_path):
     assert b"Testnachweis G25" not in response.data
 
 
-def test_index_zeigt_archiv_link(client):
-    response = client.get("/")
+def test_nachweise_zeigt_archiv_link(client):
+    response = client.get("/nachweise")
     assert b"archiv" in response.data.lower()
 
 

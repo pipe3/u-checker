@@ -101,6 +101,10 @@ def _xls_name_path() -> Path:
     return _data_dir() / "latest_name.txt"
 
 
+def _xls_upload_zeit_path() -> Path:
+    return _data_dir() / "latest_upload_zeit.txt"
+
+
 def get_db():
     db = sqlite3.connect(_db_path())
     db.row_factory = sqlite3.Row
@@ -178,7 +182,7 @@ def _sync_email_verifikation(members: list) -> None:
                 )
             elif existing["email"] != m["email"]:
                 db.execute(
-                    "UPDATE email_verifikation SET vorname=?, nachname=?, email=?, adresse_geaendert=1 WHERE pers_nr=?",
+                    "UPDATE email_verifikation SET vorname=?, nachname=?, email=?, adresse_geaendert=1, status='nie_geprueft' WHERE pers_nr=?",
                     (m["vorname"], m["nachname"], m["email"], m["pers_nr"]),
                 )
         db.commit()
@@ -275,21 +279,39 @@ def _ensure_db():
 @app.route("/")
 def index():
     with closing(get_db()) as db:
-        offene_tasks_count = db.execute(
-            "SELECT COUNT(*) FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
+        neu_count = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'NEU'"
         ).fetchone()[0]
+        unklare_count = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'UNKLARE_ZUORDNUNG'"
+        ).fetchone()[0]
+        email_ausstehend_count = db.execute(
+            "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend')"
+        ).fetchone()[0]
+
     xls_vorhanden = _xls_path().exists()
     xls_dateiname = None
+    xls_upload_zeitpunkt = None
     if xls_vorhanden:
         name_file = _xls_name_path()
         if name_file.exists():
             xls_dateiname = name_file.read_text(encoding="utf-8").strip()
+        zeit_file = _xls_upload_zeit_path()
+        if zeit_file.exists():
+            try:
+                ts = datetime.fromisoformat(zeit_file.read_text(encoding="utf-8").strip())
+                xls_upload_zeitpunkt = ts.strftime("%-d.%-m.%Y, %H:%M Uhr")
+            except ValueError:
+                pass
 
     return render_template(
         "index.html",
-        offene_tasks_count=offene_tasks_count,
+        neu_count=neu_count,
+        unklare_count=unklare_count,
+        email_ausstehend_count=email_ausstehend_count,
         xls_vorhanden=xls_vorhanden,
         xls_dateiname=xls_dateiname,
+        xls_upload_zeitpunkt=xls_upload_zeitpunkt,
     )
 
 
@@ -672,6 +694,7 @@ def upload():
     _data_dir().mkdir(parents=True, exist_ok=True)
     datei.save(_xls_path())
     _xls_name_path().write_text(dateiname, encoding="utf-8")
+    _xls_upload_zeit_path().write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
 
     members = load_members_from_xls(str(_xls_path()))
     if not members:

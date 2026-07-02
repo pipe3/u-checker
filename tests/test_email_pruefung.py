@@ -73,7 +73,7 @@ def test_upload_inaktive_mitglieder_nicht_eingetragen(client, tmp_path):
 
 
 def test_upload_geaenderte_email_setzt_adresse_geaendert_flag(client, tmp_path):
-    """Beim erneuten Upload mit geänderter E-Mail wird adresse_geaendert=1 gesetzt; Status bleibt."""
+    """Beim erneuten Upload mit geänderter E-Mail wird adresse_geaendert=1 gesetzt und status auf nie_geprueft zurückgesetzt."""
     # Erster Upload
     members_v1 = [{"pers_nr": "001", "vorname": "Max", "nachname": "Muster", "email": "alt@example.com"}]
     with patch("web.app.load_members_from_xls", return_value=members_v1):
@@ -98,7 +98,7 @@ def test_upload_geaenderte_email_setzt_adresse_geaendert_flag(client, tmp_path):
     db.close()
 
     assert row["adresse_geaendert"] == 1
-    assert row["status"] == "bestaetigt"  # Status bleibt erhalten
+    assert row["status"] == "nie_geprueft"  # Status wird zurückgesetzt, da neue Adresse ungeprüft
     assert row["email"] == "neu@example.com"
 
 

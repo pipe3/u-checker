@@ -1,192 +1,177 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Einstellungen – Untersuchungs-Checker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
-    nav { margin-bottom: 1.5rem; font-size: 0.9rem; }
-    nav a { color: #0d6efd; text-decoration: none; }
-    nav a:hover { text-decoration: underline; }
-    h2 { font-size: 1.05rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; color: #444; }
-    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    .field { margin-bottom: 0.9rem; }
-    label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; color: #333; }
-    .hint { font-size: 0.78rem; color: #888; margin-top: 0.15rem; }
-    input[type="text"], input[type="number"], input[type="password"], select {
-      width: 100%; padding: 0.4rem 0.6rem; border: 1px solid #ced4da;
-      border-radius: 4px; font-size: 0.9rem; font-family: inherit;
-    }
-    input[type="password"] { font-family: monospace; }
-    button[type="submit"] {
-      margin-top: 1.5rem; padding: 0.5rem 1.4rem;
-      background: #0d6efd; color: #fff; border: none; border-radius: 4px;
-      cursor: pointer; font-size: 0.95rem;
-    }
-    button[type="submit"]:hover { background: #0b5ed7; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.5rem; }
-    @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <h1>Einstellungen</h1>
-  <nav style="display:flex;gap:1.2rem;align-items:center;margin-bottom:1.5rem;font-size:0.9rem;">
-    <a href="/">← Zurück zur Übersicht</a>
-    <a href="/archiv">Archiv</a>
-    <a href="/email-pruefung">E-Mail-Prüfung</a>
-  </nav>
+{% extends "base.html" %}
+{% block title %}Einstellungen – Untersuchungs-Checker{% endblock %}
 
-  {% for category, message in get_flashed_messages(with_categories=true) %}
-  <div class="flash {{ category }}">{{ message }}</div>
-  {% endfor %}
+{% block extra_css %}
+<style>
+  h2 { font-size: 1.05rem; color: #444; }
+  .field { margin-bottom: 0.9rem; }
+  label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.25rem; color: #333; }
+  .hint { font-size: 0.78rem; color: #888; margin-top: 0.15rem; }
+  input[type="text"], input[type="number"], input[type="password"], select {
+    width: 100%; padding: 0.4rem 0.6rem; border: 1px solid #ced4da;
+    border-radius: 4px; font-size: 0.9rem; font-family: inherit;
+  }
+  input[type="password"] { font-family: monospace; }
+  button[type="submit"] {
+    margin-top: 1.5rem; padding: 0.5rem 1.4rem;
+    background: #0d6efd; color: #fff; border: none; border-radius: 4px;
+    cursor: pointer; font-size: 0.95rem;
+  }
+  button[type="submit"]:hover { background: #0b5ed7; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.5rem; }
+  @media (max-width: 600px) { .grid-2 { grid-template-columns: 1fr; } }
+  hr { margin: 2rem 0; border: none; border-top: 1px solid #ddd; }
+  .abschnitt-titel { font-size: 1.05rem; margin-bottom: 0.75rem; color: #444; font-weight: 600; }
+  .abschnitt-hint { font-size: 0.85rem; color: #555; margin-bottom: 0.75rem; }
+  .btn-sekundaer { padding: 0.5rem 1.4rem; background: #6c757d; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
+  .btn-sekundaer:hover { background: #5a6268; }
+</style>
+{% endblock %}
 
-  <form method="post" action="/settings">
+{% block content %}
+<h1>Einstellungen</h1>
 
-    <h2>SMTP (E-Mail-Versand)</h2>
-    <div class="grid-2">
-      <div class="field">
-        <label for="smtp_host">SMTP-Server</label>
-        <input type="text" id="smtp_host" name="smtp_host" value="{{ cfg.smtp_host }}" placeholder="smtp.example.com">
-      </div>
-      <div class="field">
-        <label for="smtp_port">Port</label>
-        <input type="number" id="smtp_port" name="smtp_port" value="{{ cfg.smtp_port }}" placeholder="587">
-      </div>
-      <div class="field">
-        <label for="smtp_user">Benutzername</label>
-        <input type="text" id="smtp_user" name="smtp_user" value="{{ cfg.smtp_user }}" placeholder="absender@example.com">
-      </div>
-      <div class="field">
-        <label for="smtp_password">Passwort</label>
-        <input type="password" id="smtp_password" name="smtp_password" value="{{ cfg.smtp_password }}">
-      </div>
+<form method="post" action="/settings">
+
+  <h2>SMTP (E-Mail-Versand)</h2>
+  <div class="grid-2">
+    <div class="field">
+      <label for="smtp_host">SMTP-Server</label>
+      <input type="text" id="smtp_host" name="smtp_host" value="{{ cfg.smtp_host }}" placeholder="smtp.example.com">
     </div>
     <div class="field">
-      <label for="smtp_from">Absenderadresse</label>
-      <input type="text" id="smtp_from" name="smtp_from" value="{{ cfg.smtp_from }}" placeholder="feuerwehr@example.com">
-    </div>
-
-    <h2>IMAP (Nachweise-Postfach)</h2>
-    <div class="grid-2">
-      <div class="field">
-        <label for="imap_host">IMAP-Server</label>
-        <input type="text" id="imap_host" name="imap_host" value="{{ cfg.imap_host }}" placeholder="imap.example.com">
-      </div>
-      <div class="field">
-        <label for="imap_port">Port</label>
-        <input type="number" id="imap_port" name="imap_port" value="{{ cfg.imap_port }}" placeholder="993">
-      </div>
-      <div class="field">
-        <label for="imap_user">Benutzername</label>
-        <input type="text" id="imap_user" name="imap_user" value="{{ cfg.imap_user }}">
-      </div>
-      <div class="field">
-        <label for="imap_password">Passwort</label>
-        <input type="password" id="imap_password" name="imap_password" value="{{ cfg.imap_password }}">
-      </div>
-    </div>
-    <div class="field" style="max-width:200px;">
-      <label for="imap_poll_minuten">Abfrageintervall (Minuten)</label>
-      <input type="number" id="imap_poll_minuten" name="imap_poll_minuten" value="{{ cfg.imap_poll_minuten }}" min="1" max="60" placeholder="5">
-      <p class="hint">Wie oft wird das Postfach auf neue Nachrichten geprüft?</p>
-    </div>
-
-    <h2>Empfänger</h2>
-    <div class="field">
-      <label for="kommandanten_cc">Kommandanten (CC bei abgelaufenen Prüfungen)</label>
-      <input type="text" id="kommandanten_cc" name="kommandanten_cc" value="{{ cfg.kommandanten_cc }}" placeholder="k1@example.com,k2@example.com">
-      <p class="hint">Kommagetrennte E-Mail-Adressen. Werden in CC gesetzt, wenn mindestens eine Prüfung abgelaufen ist.</p>
+      <label for="smtp_port">Port</label>
+      <input type="number" id="smtp_port" name="smtp_port" value="{{ cfg.smtp_port }}" placeholder="587">
     </div>
     <div class="field">
-      <label for="zusammenfassung_an">Gesamtübersicht an</label>
-      <input type="text" id="zusammenfassung_an" name="zusammenfassung_an" value="{{ cfg.zusammenfassung_an }}" placeholder="uebersicht@example.com">
-      <p class="hint">Kommagetrennte Adressen für die Gesamtübersicht aller Fälligkeiten (eine E-Mail für alle).</p>
-    </div>
-
-    <h2>Prüfungsparameter</h2>
-    <div class="grid-2">
-      <div class="field">
-        <label for="warn_days">Warnfrist (Tage)</label>
-        <input type="number" id="warn_days" name="warn_days" value="{{ cfg.warn_days }}" min="1" max="365" placeholder="90">
-        <p class="hint">Wie viele Tage vor Ablauf wird gewarnt?</p>
-      </div>
-      <div class="field">
-        <label for="pruefungstypen">Aktive Prüfungstypen</label>
-        <input type="text" id="pruefungstypen" name="pruefungstypen" value="{{ cfg.pruefungstypen }}" placeholder="G25,G26,FSK">
-        <p class="hint">Kommagetrennte Kurzbezeichnungen aus MP-Feuer.</p>
-      </div>
-    </div>
-
-    <h2>Archiv</h2>
-    <div class="field">
-      <label for="archiv_tage">Aufbewahrungsfrist Archiv (Tage)</label>
-      <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
-      <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
-    </div>
-
-    <h2>E-Mail an Mitglieder</h2>
-    <div class="field">
-      <label for="email_betreff">Betreff</label>
-      <input type="text" id="email_betreff" name="email_betreff" value="{{ cfg.email_betreff }}" placeholder="Handlungsbedarf: Ablaufende Untersuchungen">
+      <label for="smtp_user">Benutzername</label>
+      <input type="text" id="smtp_user" name="smtp_user" value="{{ cfg.smtp_user }}" placeholder="absender@example.com">
     </div>
     <div class="field">
-      <label for="email_template">Mailtext</label>
-      <textarea id="email_template" name="email_template" rows="10" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.email_template }}</textarea>
-      <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code>, <code>{pruefungen_liste}</code></p>
+      <label for="smtp_password">Passwort</label>
+      <input type="password" id="smtp_password" name="smtp_password" value="{{ cfg.smtp_password }}">
     </div>
+  </div>
+  <div class="field">
+    <label for="smtp_from">Absenderadresse</label>
+    <input type="text" id="smtp_from" name="smtp_from" value="{{ cfg.smtp_from }}" placeholder="feuerwehr@example.com">
+  </div>
 
-    <h2>Zusammenfassungs-Mail</h2>
+  <h2>IMAP (Nachweise-Postfach)</h2>
+  <div class="grid-2">
     <div class="field">
-      <label for="zusammenfassung_betreff">Betreff</label>
-      <input type="text" id="zusammenfassung_betreff" name="zusammenfassung_betreff" value="{{ cfg.zusammenfassung_betreff }}" placeholder="Übersicht ablaufende Untersuchungen">
-    </div>
-    <div class="field">
-      <label for="zusammenfassung_template">Mailtext</label>
-      <textarea id="zusammenfassung_template" name="zusammenfassung_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.zusammenfassung_template }}</textarea>
-      <p class="hint">Verfügbare Platzhalter: <code>{datum}</code>, <code>{zusammenfassung}</code>, <code>{anzahl_personen}</code>, <code>{anzahl_abgelaufen}</code>, <code>{anzahl_warnung}</code></p>
-    </div>
-
-    <h2>Verifikations-Mail</h2>
-    <div class="field">
-      <label for="verifikation_betreff">Betreff</label>
-      <input type="text" id="verifikation_betreff" name="verifikation_betreff" value="{{ cfg.verifikation_betreff }}" placeholder="Bitte bestätigen Sie Ihre E-Mail-Adresse">
+      <label for="imap_host">IMAP-Server</label>
+      <input type="text" id="imap_host" name="imap_host" value="{{ cfg.imap_host }}" placeholder="imap.example.com">
     </div>
     <div class="field">
-      <label for="verifikation_template">Mailtext</label>
-      <textarea id="verifikation_template" name="verifikation_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.verifikation_template }}</textarea>
-      <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code></p>
+      <label for="imap_port">Port</label>
+      <input type="number" id="imap_port" name="imap_port" value="{{ cfg.imap_port }}" placeholder="993">
     </div>
-    <div class="field" style="max-width:350px;">
-      <label for="imap_verifikation_ordner">IMAP-Ordner für Verifikations-Antworten</label>
-      <input type="text" id="imap_verifikation_ordner" name="imap_verifikation_ordner" value="{{ cfg.imap_verifikation_ordner }}" placeholder="u-checker-verifikation">
-      <p class="hint">In diesen IMAP-Ordner werden Antworten auf Verifikationsmails verschoben.</p>
+    <div class="field">
+      <label for="imap_user">Benutzername</label>
+      <input type="text" id="imap_user" name="imap_user" value="{{ cfg.imap_user }}">
     </div>
-    <div class="field" style="max-width:350px;">
-      <label for="imap_nachweis_ordner">IMAP-Ordner für abgeschlossene Nachweise</label>
-      <input type="text" id="imap_nachweis_ordner" name="imap_nachweis_ordner" value="{{ cfg.imap_nachweis_ordner }}" placeholder="Nachweise">
-      <p class="hint">In diesen IMAP-Ordner werden erledigte Nachweis-Emails verschoben.</p>
+    <div class="field">
+      <label for="imap_password">Passwort</label>
+      <input type="password" id="imap_password" name="imap_password" value="{{ cfg.imap_password }}">
     </div>
+  </div>
+  <div class="field" style="max-width:200px;">
+    <label for="imap_poll_minuten">Abfrageintervall (Minuten)</label>
+    <input type="number" id="imap_poll_minuten" name="imap_poll_minuten" value="{{ cfg.imap_poll_minuten }}" min="1" max="60" placeholder="5">
+    <p class="hint">Wie oft wird das Postfach auf neue Nachrichten geprüft?</p>
+  </div>
 
-    <button type="submit">Einstellungen speichern</button>
-  </form>
+  <h2>Empfänger</h2>
+  <div class="field">
+    <label for="kommandanten_cc">Kommandanten (CC bei abgelaufenen Prüfungen)</label>
+    <input type="text" id="kommandanten_cc" name="kommandanten_cc" value="{{ cfg.kommandanten_cc }}" placeholder="k1@example.com,k2@example.com">
+    <p class="hint">Kommagetrennte E-Mail-Adressen. Werden in CC gesetzt, wenn mindestens eine Prüfung abgelaufen ist.</p>
+  </div>
+  <div class="field">
+    <label for="zusammenfassung_an">Gesamtübersicht an</label>
+    <input type="text" id="zusammenfassung_an" name="zusammenfassung_an" value="{{ cfg.zusammenfassung_an }}" placeholder="uebersicht@example.com">
+    <p class="hint">Kommagetrennte Adressen für die Gesamtübersicht aller Fälligkeiten (eine E-Mail für alle).</p>
+  </div>
 
-  <hr style="margin: 2rem 0; border: none; border-top: 1px solid #ddd;">
-  <h2 style="font-size:1.05rem; margin-bottom:0.75rem; color:#444;">SMTP-Verbindung testen</h2>
-  <p style="font-size:0.85rem; color:#555; margin-bottom:0.75rem;">Sendet eine Test-Mail an die konfigurierte Gesamtübersichts-Adresse (liest die gespeicherten Einstellungen).</p>
-  <form method="post" action="/settings/smtp-test">
-    <button type="submit" style="padding:0.5rem 1.4rem; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Test-Mail senden</button>
-  </form>
+  <h2>Prüfungsparameter</h2>
+  <div class="grid-2">
+    <div class="field">
+      <label for="warn_days">Warnfrist (Tage)</label>
+      <input type="number" id="warn_days" name="warn_days" value="{{ cfg.warn_days }}" min="1" max="365" placeholder="90">
+      <p class="hint">Wie viele Tage vor Ablauf wird gewarnt?</p>
+    </div>
+    <div class="field">
+      <label for="pruefungstypen">Aktive Prüfungstypen</label>
+      <input type="text" id="pruefungstypen" name="pruefungstypen" value="{{ cfg.pruefungstypen }}" placeholder="G25,G26,FSK">
+      <p class="hint">Kommagetrennte Kurzbezeichnungen aus MP-Feuer.</p>
+    </div>
+  </div>
 
-  <hr style="margin: 2rem 0; border: none; border-top: 1px solid #ddd;">
-  <h2 style="font-size:1.05rem; margin-bottom:0.75rem; color:#444;">Posteingang jetzt abrufen</h2>
-  <p style="font-size:0.85rem; color:#555; margin-bottom:0.75rem;">Ruft den IMAP-Posteingang sofort ab, ohne auf den nächsten automatischen Abruf zu warten.</p>
-  <form method="post" action="/settings/imap-poll">
-    <button type="submit" style="padding:0.5rem 1.4rem; background:#6c757d; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem;">Posteingang abrufen</button>
-  </form>
-</body>
-</html>
+  <h2>Archiv</h2>
+  <div class="field">
+    <label for="archiv_tage">Aufbewahrungsfrist Archiv (Tage)</label>
+    <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
+    <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
+  </div>
+
+  <h2>E-Mail an Mitglieder</h2>
+  <div class="field">
+    <label for="email_betreff">Betreff</label>
+    <input type="text" id="email_betreff" name="email_betreff" value="{{ cfg.email_betreff }}" placeholder="Handlungsbedarf: Ablaufende Untersuchungen">
+  </div>
+  <div class="field">
+    <label for="email_template">Mailtext</label>
+    <textarea id="email_template" name="email_template" rows="10" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.email_template }}</textarea>
+    <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code>, <code>{pruefungen_liste}</code></p>
+  </div>
+
+  <h2>Zusammenfassungs-Mail</h2>
+  <div class="field">
+    <label for="zusammenfassung_betreff">Betreff</label>
+    <input type="text" id="zusammenfassung_betreff" name="zusammenfassung_betreff" value="{{ cfg.zusammenfassung_betreff }}" placeholder="Übersicht ablaufende Untersuchungen">
+  </div>
+  <div class="field">
+    <label for="zusammenfassung_template">Mailtext</label>
+    <textarea id="zusammenfassung_template" name="zusammenfassung_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.zusammenfassung_template }}</textarea>
+    <p class="hint">Verfügbare Platzhalter: <code>{datum}</code>, <code>{zusammenfassung}</code>, <code>{anzahl_personen}</code>, <code>{anzahl_abgelaufen}</code>, <code>{anzahl_warnung}</code></p>
+  </div>
+
+  <h2>Verifikations-Mail</h2>
+  <div class="field">
+    <label for="verifikation_betreff">Betreff</label>
+    <input type="text" id="verifikation_betreff" name="verifikation_betreff" value="{{ cfg.verifikation_betreff }}" placeholder="Bitte bestätigen Sie Ihre E-Mail-Adresse">
+  </div>
+  <div class="field">
+    <label for="verifikation_template">Mailtext</label>
+    <textarea id="verifikation_template" name="verifikation_template" rows="8" style="width:100%; padding:0.4rem 0.6rem; border:1px solid #ced4da; border-radius:4px; font-size:0.9rem; font-family:monospace; resize:vertical;">{{ cfg.verifikation_template }}</textarea>
+    <p class="hint">Verfügbare Platzhalter: <code>{vorname}</code>, <code>{nachname}</code></p>
+  </div>
+  <div class="field" style="max-width:350px;">
+    <label for="imap_verifikation_ordner">IMAP-Ordner für Verifikations-Antworten</label>
+    <input type="text" id="imap_verifikation_ordner" name="imap_verifikation_ordner" value="{{ cfg.imap_verifikation_ordner }}" placeholder="u-checker-verifikation">
+    <p class="hint">In diesen IMAP-Ordner werden Antworten auf Verifikationsmails verschoben.</p>
+  </div>
+  <div class="field" style="max-width:350px;">
+    <label for="imap_nachweis_ordner">IMAP-Ordner für abgeschlossene Nachweise</label>
+    <input type="text" id="imap_nachweis_ordner" name="imap_nachweis_ordner" value="{{ cfg.imap_nachweis_ordner }}" placeholder="Nachweise">
+    <p class="hint">In diesen IMAP-Ordner werden erledigte Nachweis-Emails verschoben.</p>
+  </div>
+
+  <button type="submit">Einstellungen speichern</button>
+</form>
+
+<hr>
+<p class="abschnitt-titel">SMTP-Verbindung testen</p>
+<p class="abschnitt-hint">Sendet eine Test-Mail an die konfigurierte Gesamtübersichts-Adresse (liest die gespeicherten Einstellungen).</p>
+<form method="post" action="/settings/smtp-test">
+  <button type="submit" class="btn-sekundaer">Test-Mail senden</button>
+</form>
+
+<hr>
+<p class="abschnitt-titel">Posteingang jetzt abrufen</p>
+<p class="abschnitt-hint">Ruft den IMAP-Posteingang sofort ab, ohne auf den nächsten automatischen Abruf zu warten.</p>
+<form method="post" action="/settings/imap-poll">
+  <button type="submit" class="btn-sekundaer">Posteingang abrufen</button>
+</form>
+{% endblock %}

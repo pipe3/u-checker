@@ -1,69 +1,146 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Untersuchungs-Checker</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-    h1 { font-size: 1.5rem; margin-bottom: 1.5rem; }
-    h2 { font-size: 1.1rem; margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
-    section { margin-bottom: 2rem; }
-    .flash { padding: 0.6rem 1rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem; }
-    .flash.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-    .flash.error   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    form { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
-    input[type="file"] { flex: 1; min-width: 0; }
-    button { padding: 0.4rem 1rem; background: #0d6efd; color: #fff; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap; }
-    button:disabled { background: #adb5bd; cursor: not-allowed; }
-    button.secondary { background: #6c757d; }
-    .meta { font-size: 0.85rem; color: #666; margin-top: 0.4rem; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th { text-align: left; padding: 0.4rem 0.6rem; background: #f8f9fa; border-bottom: 2px solid #dee2e6; white-space: nowrap; }
-    td { padding: 0.4rem 0.6rem; border-bottom: 1px solid #dee2e6; vertical-align: top; }
-    tr:last-child td { border-bottom: none; }
-    .error-msg { color: #721c24; font-size: 0.8rem; }
-    p.empty { color: #888; font-size: 0.9rem; }
-    .badge { display: inline-block; background: #dc3545; color: #fff; border-radius: 10px; font-size: 0.75rem; font-weight: 700; padding: 0 6px; min-width: 20px; text-align: center; line-height: 1.5; vertical-align: middle; }
-    .badge.zero { background: #6c757d; }
-    .status-NEU  { color: #0d6efd; font-weight: 600; }
-    .status-ERLEDIGT { color: #155724; }
-    .status-UNKLARE_ZUORDNUNG { color: #856404; font-weight: 600; }
-    .hinweis { font-size: 0.75rem; background: #fff3cd; border: 1px solid #ffc107; border-radius: 3px; padding: 0 5px; color: #856404; }
-    select.mitglied-select { font-size: 0.8rem; padding: 0.2rem 0.4rem; max-width: 180px; }
-  </style>
-</head>
-<body>
-  <h1>Untersuchungs-Checker</h1>
-  <nav style="margin-bottom:1rem;font-size:0.9rem;display:flex;gap:1.2rem;align-items:center;">
-    <a href="/nachweise" style="color:#0d6efd;text-decoration:none;">Eingehende Nachweise</a>
-    <a href="/faelligkeiten" style="color:#0d6efd;text-decoration:none;">Fälligkeiten</a>
-    <a href="/settings" style="color:#0d6efd;text-decoration:none;">⚙ Einstellungen</a>
-    <a href="/archiv" style="color:#0d6efd;text-decoration:none;">Archiv</a>
-    <a href="/email-pruefung" style="color:#0d6efd;text-decoration:none;">E-Mail-Prüfung</a>
-    <a href="/nachweise" style="text-decoration:none;">Offene Aufgaben: <span class="badge {% if offene_tasks_count == 0 %}zero{% endif %}">{{ offene_tasks_count }}</span></a>
-  </nav>
+{% extends "base.html" %}
+{% block title %}Übersicht – Untersuchungs-Checker{% endblock %}
 
-  {% for category, message in get_flashed_messages(with_categories=true) %}
-  <div class="flash {{ category }}">{{ message }}</div>
-  {% endfor %}
+{% block extra_css %}
+<style>
+  h1 { font-size: 1.4rem; margin-bottom: 1.25rem; color: #333; }
+  .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
+  @media (max-width: 600px) { .dashboard { grid-template-columns: 1fr; } }
 
-  <section>
-    <h2>XLS-Datei hochladen</h2>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-      <input type="file" name="xls_datei" accept=".xls" required>
-      <button type="submit">Hochladen</button>
-    </form>
+  .kachel {
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+  }
+  .kachel-titel {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #999;
+    margin-bottom: 0.6rem;
+  }
+  .kachel-zahl { font-size: 2.2rem; font-weight: 700; line-height: 1; color: #222; }
+  .kachel-zahl.ok  { color: #198754; }
+  .kachel-zahl.neu { color: #0d6efd; }
+  .kachel-zeile { font-size: 0.85rem; margin: 0.2rem 0 0; }
+  .kachel-zeile.ok     { color: #198754; }
+  .kachel-zeile.info   { color: #0d6efd; }
+  .kachel-zeile.warn   { color: #856404; }
+  .kachel-zeile.muted  { color: #888; }
+  .kachel-link {
+    display: inline-block;
+    margin-top: auto;
+    padding-top: 1rem;
+    font-size: 0.85rem;
+    color: #0d6efd;
+    text-decoration: none;
+  }
+  .kachel-link:hover { text-decoration: underline; }
+
+  .xls-dateiname { font-weight: 600; font-size: 0.95rem; margin: 0 0 0.2rem; word-break: break-all; }
+  .xls-meta { font-size: 0.82rem; color: #666; margin-bottom: 0.9rem; }
+  .xls-aktionen { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+  .btn-upload {
+    display: inline-block;
+    padding: 0.4rem 0.9rem;
+    background: #0d6efd;
+    color: #fff;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1.4;
+  }
+  .btn-upload:hover { background: #0b5ed7; }
+  .btn-löschen {
+    padding: 0.4rem 0.9rem;
+    font-size: 0.85rem;
+    background: #6c757d;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .btn-löschen:hover { background: #5a6268; }
+  .kein-xls-hint { font-size: 0.82rem; color: #856404; margin: 0.2rem 0 0.8rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Untersuchungs-Checker</h1>
+
+<div class="dashboard">
+
+  <div class="kachel">
+    <div class="kachel-titel">MP-Feuer Export</div>
     {% if xls_vorhanden %}
-    <p class="meta">Aktuelle Datei: <strong>{{ xls_dateiname or "latest.xls" }}</strong></p>
-    <form action="/upload/loeschen" method="post" style="display:inline">
-      <button type="submit">XLS löschen</button>
-    </form>
+    <p class="xls-dateiname">{{ xls_dateiname or "latest.xls" }}</p>
+    <p class="xls-meta">{% if xls_upload_zeitpunkt %}Hochgeladen am {{ xls_upload_zeitpunkt }}{% else %}Hochladedatum unbekannt{% endif %}</p>
+    <div class="xls-aktionen">
+      <form action="/upload" method="post" enctype="multipart/form-data" style="margin:0;">
+        <label class="btn-upload">
+          Neue Datei laden
+          <input type="file" name="xls_datei" accept=".xls" style="display:none;" onchange="this.form.submit()">
+        </label>
+        <noscript><button type="submit" style="margin-left:4px;padding:0.4rem 0.9rem;font-size:0.85rem;">Hochladen</button></noscript>
+      </form>
+      <form action="/upload/loeschen" method="post" style="margin:0;"
+            onsubmit="return confirm('XLS-Datei wirklich löschen?');">
+        <button type="submit" class="btn-löschen">Löschen</button>
+      </form>
+    </div>
     {% else %}
-    <p class="meta">Noch keine Datei hochgeladen.</p>
+    <p class="xls-meta">Noch keine Datei hochgeladen.</p>
+    <form action="/upload" method="post" enctype="multipart/form-data" style="margin:0;">
+      <label class="btn-upload">
+        Datei hochladen
+        <input type="file" name="xls_datei" accept=".xls" style="display:none;" onchange="this.form.submit()">
+      </label>
+      <noscript><button type="submit" style="margin-left:4px;padding:0.4rem 0.9rem;font-size:0.85rem;">Hochladen</button></noscript>
+    </form>
     {% endif %}
-  </section>
+  </div>
 
-</body>
-</html>
+  <div class="kachel">
+    <div class="kachel-titel">Eingehende Nachweise</div>
+    {% set gesamt = neu_count + unklare_count %}
+    {% if gesamt == 0 %}
+    <div class="kachel-zahl ok">0</div>
+    <p class="kachel-zeile ok">Alles erledigt</p>
+    {% else %}
+    <div class="kachel-zahl">{{ gesamt }}</div>
+    {% if neu_count > 0 %}
+    <p class="kachel-zeile info">{{ neu_count }} bereit zur Erledigung</p>
+    {% endif %}
+    {% if unklare_count > 0 %}
+    <p class="kachel-zeile warn">{{ unklare_count }} brauchen manuelle Prüfung</p>
+    {% endif %}
+    {% endif %}
+    <a class="kachel-link" href="{{ url_for('nachweise') }}">Nachweise öffnen →</a>
+  </div>
+
+  <div class="kachel">
+    <div class="kachel-titel">Fälligkeiten</div>
+    <p style="font-size:0.875rem;color:#555;margin:0 0 0.5rem;">Untersuchungsfristen prüfen und Erinnerungen versenden.</p>
+    {% if not xls_vorhanden %}
+    <p class="kein-xls-hint">Kein XLS vorhanden – bitte zuerst Datei hochladen.</p>
+    {% endif %}
+    <a class="kachel-link" href="{{ url_for('faelligkeiten') }}">Fälligkeiten öffnen →</a>
+  </div>
+
+  <div class="kachel">
+    <div class="kachel-titel">E-Mail-Prüfung</div>
+    {% if email_ausstehend_count == 0 %}
+    <div class="kachel-zahl ok">0</div>
+    <p class="kachel-zeile ok">Alle Adressen bestätigt</p>
+    {% else %}
+    <div class="kachel-zahl">{{ email_ausstehend_count }}</div>
+    <p class="kachel-zeile warn">Adresse{{ 'n' if email_ausstehend_count != 1 }} nicht bestätigt</p>
+    {% endif %}
+    <a class="kachel-link" href="{{ url_for('email_pruefung') }}">E-Mail-Prüfung öffnen →</a>
+  </div>
+
+</div>
+{% endblock %}
