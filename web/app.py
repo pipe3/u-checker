@@ -905,17 +905,17 @@ def _personen_zu_vorschau(personen: list) -> list:
     rows = []
     for p in personen:
         pruefungen = [{"typ": pr.typ, "status": pr.status, "datum": pr.datum.isoformat()} for pr in p.pruefungen]
-        fruehestes_datum = min((pr.datum for pr in p.pruefungen), default=None)
+        naechste_faelligkeit = min((pr.datum for pr in p.pruefungen), default=None)
         rows.append({
             "pers_nr": p.pers_nr,
             "name": f"{p.vorname} {p.nachname}",
             "pruefungen": pruefungen,
-            "fruehestes_datum": fruehestes_datum.isoformat() if fruehestes_datum else "",
+            "naechste_faelligkeit": naechste_faelligkeit.isoformat() if naechste_faelligkeit else "",
             "cc_flag": p.hat_abgelaufene,
         })
     rows.sort(key=lambda r: (
         0 if r["cc_flag"] else 1,
-        r["fruehestes_datum"] or "9999-12-31",
+        r["naechste_faelligkeit"] or "9999-12-31",
     ))
     return rows
 

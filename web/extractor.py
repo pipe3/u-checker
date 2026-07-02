@@ -170,7 +170,7 @@ def parse_datum(text: str) -> Optional[date]:
         kandidaten.append(d)
 
     if kandidaten:
-        # Frühestes Datum bevorzugen (nächste Fälligkeit)
+        # Nächste Fälligkeit = frühestes der gefundenen Daten
         return min(kandidaten)
     return None
 

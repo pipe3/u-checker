@@ -143,7 +143,7 @@ def test_post_analyse_alle_auswaehlen_button_vorhanden(client, tmp_path):
     assert "Alle auswählen" in html
 
 
-def test_post_analyse_fruehestes_datum_sichtbar(client, tmp_path):
+def test_post_analyse_naechste_faelligkeit_sichtbar(client, tmp_path):
     (tmp_path / "latest.xls").write_bytes(b"dummy")
     datum = date.today() - timedelta(days=3)
     pruefung = Pruefung(typ="G25", beschreibung="G25", datum=datum, status="abgelaufen")

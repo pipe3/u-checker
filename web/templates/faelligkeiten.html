@@ -59,7 +59,7 @@
           <th></th>
           <th>Name</th>
           <th>Prüfungen</th>
-          <th>Frühestes Datum</th>
+          <th>Nächste Fälligkeit</th>
           <th></th>
         </tr>
       </thead>
@@ -78,7 +78,7 @@
             </span>
             {% endfor %}
           </td>
-          <td style="white-space:nowrap;">{{ row.fruehestes_datum | datum_de }}</td>
+          <td style="white-space:nowrap;">{{ row.naechste_faelligkeit | datum_de }}</td>
           <td>
             {% if row.cc_flag %}<span class="cc-badge">CC</span>{% endif %}
           </td>
