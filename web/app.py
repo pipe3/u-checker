@@ -167,23 +167,44 @@ def init_db():
         db.commit()
 
 
+_EMAIL_FORMAT_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _email_format_gueltig(email: str) -> bool:
+    """Minimalcheck: faengt grobe Tippfehler ab (z.B. fehlendes '@'), keine RFC-5322-Validierung."""
+    return bool(_EMAIL_FORMAT_RE.match(email or ""))
+
+
 def _sync_email_verifikation(members: list) -> None:
     """Synchronisiert aktive Mitglieder in email_verifikation."""
     with closing(get_db()) as db:
         for m in members:
             existing = db.execute(
-                "SELECT email FROM email_verifikation WHERE pers_nr = ?",
+                "SELECT email, status FROM email_verifikation WHERE pers_nr = ?",
                 (m["pers_nr"],),
             ).fetchone()
+            gueltig = _email_format_gueltig(m["email"])
             if existing is None:
+                status = "nie_geprueft" if gueltig else "ungueltige_adresse"
                 db.execute(
-                    "INSERT INTO email_verifikation (pers_nr, vorname, nachname, email) VALUES (?, ?, ?, ?)",
-                    (m["pers_nr"], m["vorname"], m["nachname"], m["email"]),
+                    "INSERT INTO email_verifikation (pers_nr, vorname, nachname, email, status) VALUES (?, ?, ?, ?, ?)",
+                    (m["pers_nr"], m["vorname"], m["nachname"], m["email"], status),
                 )
             elif existing["email"] != m["email"]:
+                status = "nie_geprueft" if gueltig else "ungueltige_adresse"
                 db.execute(
-                    "UPDATE email_verifikation SET vorname=?, nachname=?, email=?, adresse_geaendert=1, status='nie_geprueft' WHERE pers_nr=?",
-                    (m["vorname"], m["nachname"], m["email"], m["pers_nr"]),
+                    "UPDATE email_verifikation SET vorname=?, nachname=?, email=?, adresse_geaendert=1, status=? WHERE pers_nr=?",
+                    (m["vorname"], m["nachname"], m["email"], status, m["pers_nr"]),
+                )
+            elif not gueltig and existing["status"] != "ungueltige_adresse":
+                db.execute(
+                    "UPDATE email_verifikation SET status='ungueltige_adresse' WHERE pers_nr=?",
+                    (m["pers_nr"],),
+                )
+            elif gueltig and existing["status"] == "ungueltige_adresse":
+                db.execute(
+                    "UPDATE email_verifikation SET status='nie_geprueft' WHERE pers_nr=?",
+                    (m["pers_nr"],),
                 )
         db.commit()
 
@@ -286,7 +307,7 @@ def index():
             "SELECT COUNT(*) FROM tasks WHERE status = 'UNKLARE_ZUORDNUNG'"
         ).fetchone()[0]
         email_ausstehend_count = db.execute(
-            "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend')"
+            "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend', 'ungueltige_adresse')"
         ).fetchone()[0]
 
     xls_vorhanden = _xls_path().exists()
@@ -638,6 +659,14 @@ def email_pruefung_senden():
                 (pers_nr,),
             ).fetchone()
             if row is None:
+                continue
+            if not _email_format_gueltig(row["email"]):
+                db.execute(
+                    "UPDATE email_verifikation SET status='ungueltige_adresse' WHERE pers_nr=?",
+                    (pers_nr,),
+                )
+                db.commit()
+                flash(f"Ungültige E-Mail-Adresse übersprungen: {row['email']}", "error")
                 continue
             try:
                 msg_id = send_verifikationsmail(

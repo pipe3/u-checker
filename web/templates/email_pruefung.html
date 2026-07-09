@@ -7,6 +7,7 @@
   .status-nie_geprueft { color: #6c757d; }
   .status-ausstehend  { color: #856404; font-weight: 600; }
   .status-bestaetigt  { color: #155724; font-weight: 600; }
+  .status-ungueltige_adresse { color: #721c24; font-weight: 600; }
   .filter-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; font-size: 0.9rem; }
   .filter-bar a { color: #0d6efd; text-decoration: none; padding: 0.25rem 0.6rem; border: 1px solid #dee2e6; border-radius: 4px; }
   .filter-bar a.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
@@ -40,6 +41,8 @@
        class="{% if status_filter == 'ausstehend' %}active{% endif %}">Ausstehend</a>
     <a href="/email-pruefung?status=bestaetigt{% if sort %}&sort={{ sort }}{% endif %}"
        class="{% if status_filter == 'bestaetigt' %}active{% endif %}">Bestätigt</a>
+    <a href="/email-pruefung?status=ungueltige_adresse{% if sort %}&sort={{ sort }}{% endif %}"
+       class="{% if status_filter == 'ungueltige_adresse' %}active{% endif %}">Ungültige Adresse</a>
   </div>
 
   {% if mitglieder %}
@@ -78,6 +81,7 @@
             {% if m["status"] == "nie_geprueft" %}Nie geprüft
             {% elif m["status"] == "ausstehend" %}Ausstehend
             {% elif m["status"] == "bestaetigt" %}Bestätigt
+            {% elif m["status"] == "ungueltige_adresse" %}Ungültige Adresse
             {% else %}{{ m["status"] }}{% endif %}
           </td>
           <td>{{ m["gesendet_am"][:10] | datum_de if m["gesendet_am"] else "–" }}</td>

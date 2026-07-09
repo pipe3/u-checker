@@ -121,6 +121,66 @@ def test_upload_unveraenderte_email_aendert_nichts(client, tmp_path):
 
 # --- GET /email-pruefung ---
 
+def test_upload_ungueltige_email_setzt_status_ungueltige_adresse(client, tmp_path):
+    """Eine Adresse ohne '@' (z.B. 'vorname-name at domain.de') wird beim Import als ungueltige_adresse markiert."""
+    members = [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster", "email": "max-muster at example.de"},
+    ]
+    with patch("web.app.load_members_from_xls", return_value=members):
+        datei = (io.BytesIO(b"dummy xls"), "export.xls")
+        client.post("/upload", data={"xls_datei": datei}, content_type="multipart/form-data")
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+
+    assert row["status"] == "ungueltige_adresse"
+
+
+def test_upload_korrigierte_email_faellt_auf_nie_geprueft_zurueck(client, tmp_path):
+    """Wird eine zuvor ungueltige Adresse per Import auf ein gueltiges Format korrigiert, faellt der Status auf nie_geprueft zurueck."""
+    members_v1 = [{"pers_nr": "001", "vorname": "Max", "nachname": "Muster", "email": "max-muster at example.de"}]
+    with patch("web.app.load_members_from_xls", return_value=members_v1):
+        datei = (io.BytesIO(b"dummy xls"), "export.xls")
+        client.post("/upload", data={"xls_datei": datei}, content_type="multipart/form-data")
+
+    members_v2 = [{"pers_nr": "001", "vorname": "Max", "nachname": "Muster", "email": "max@example.de"}]
+    with patch("web.app.load_members_from_xls", return_value=members_v2):
+        datei = (io.BytesIO(b"dummy xls"), "export.xls")
+        client.post("/upload", data={"xls_datei": datei}, content_type="multipart/form-data")
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+
+    assert row["status"] == "nie_geprueft"
+    assert row["email"] == "max@example.de"
+
+
+def test_upload_unveraenderte_ungueltige_email_wird_bei_erneutem_sync_erkannt(client, tmp_path):
+    """Ein Bestandseintrag mit unveraendert ungueltiger Adresse wird bei jedem Sync-Durchlauf geprueft, nicht nur bei Aenderung."""
+    client.get("/")  # DB initialisieren
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max-muster at example.de", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+
+    members = [{"pers_nr": "001", "vorname": "Max", "nachname": "Muster", "email": "max-muster at example.de"}]
+    with patch("web.app.load_members_from_xls", return_value=members):
+        datei = (io.BytesIO(b"dummy xls"), "export.xls")
+        client.post("/upload", data={"xls_datei": datei}, content_type="multipart/form-data")
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+
+    assert row["status"] == "ungueltige_adresse"
+
+
 def test_email_pruefung_gibt_200_zurueck(client):
     """`GET /email-pruefung` gibt HTTP 200 zurück."""
     response = client.get("/email-pruefung")
@@ -396,3 +456,54 @@ def test_senden_nutzt_verifikation_betreff_und_template_aus_db(client, tmp_path)
     kwargs = mock_send.call_args.kwargs
     assert kwargs.get("betreff") == "Test-Verifikations-Betreff"
     assert kwargs.get("template") == "Hallo {vorname} {nachname}, Test-Inhalt."
+
+
+# --- Versand-Guard gegen ungueltige Adressen ---
+
+def test_senden_blockt_ungueltige_adresse_ohne_versand(client, tmp_path):
+    """Eine ausgewaehlte Person mit ungueltiger Adresse wird nicht an send_verifikationsmail uebergeben."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Muster",
+         "email": "max-muster at example.de", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail") as mock_send:
+        response = client.post(
+            "/email-pruefung/senden", data={"pers_nr": ["001"]}, follow_redirects=True
+        )
+
+    mock_send.assert_not_called()
+    html = response.data.decode("utf-8")
+    assert "Ungültige" in html or "ungueltig" in html.lower()
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr='001'").fetchone()
+    db.close()
+    assert row["status"] == "ungueltige_adresse"
+    assert row["gesendet_am"] is None
+
+
+def test_senden_gemischte_auswahl_versendet_nur_gueltige(client, tmp_path):
+    """Bei gemischter Auswahl wird nur die gueltige Adresse versendet, die ungueltige uebersprungen."""
+    client.get("/")
+    _seed_db(tmp_path, [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "A",
+         "email": "max-muster at example.de", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+        {"pers_nr": "002", "vorname": "Lisa", "nachname": "B",
+         "email": "lisa@example.de", "status": "nie_geprueft",
+         "gesendet_am": None, "bestaetigt_am": None, "adresse_geaendert": 0},
+    ])
+    with patch("web.app.send_verifikationsmail", return_value="<msg@test>") as mock_send:
+        client.post("/email-pruefung/senden", data={"pers_nr": ["001", "002"]})
+
+    mock_send.assert_called_once()
+
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["pers_nr"]: r for r in db.execute("SELECT * FROM email_verifikation").fetchall()}
+    db.close()
+    assert rows["001"]["status"] == "ungueltige_adresse"
+    assert rows["002"]["status"] == "ausstehend"
