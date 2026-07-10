@@ -18,13 +18,17 @@ Der Prozess, mit dem bestätigt wird, dass eine E-Mail-Adresse eines Mitglieds n
 Der aktuelle Zustand der E-Mail-Verifikation eines Mitglieds. Mögliche Zustände:
 - `nie_geprueft` – Es wurde noch keine Verifikationsmail gesendet (Ausgangszustand für neue Mitglieder).
 - `ausstehend` – Eine Verifikationsmail wurde gesendet, aber noch keine Antwort eingegangen. Enthält das Sendedatum.
-- `bestaetigt` – Eine Bestätigung wurde empfangen. Enthält das Bestätigungsdatum.
+- `bestaetigt` – Eine Bestätigung wurde empfangen. Enthält das Bestätigungsdatum sowie die Herkunft der Bestätigung (`automatisch` oder `manuell`).
 - `ungueltige_adresse` – Die hinterlegte E-Mail-Adresse erfüllt nicht einmal ein minimales Formatkriterium (z.B. fehlendes `@`) und wurde deshalb gar nicht erst zum Versand einer Verifikationsmail zugelassen. Wird bei jedem XLS-Import geprüft, nicht nur bei Adressänderung. Fällt beim nächsten Import automatisch auf `nie_geprueft` zurück, sobald die Adresse formal wieder gültig ist.
+- `re_verifikation_ausstehend` – Ein Mitglied war bereits `bestaetigt`, es wurde jedoch erneut eine Verifikationsmail versendet (z.B. versehentlich oder nach langer Zeit). Enthält weiterhin das alte Bestätigungsdatum zusammen mit dem neuen Sendedatum, damit die frühere Bestätigung für den Admin sichtbar bleibt. Geht eine passende Antwort auf die neue Verifikationsmail ein, springt der Status auf `bestaetigt` mit aktualisiertem Datum. Es gibt keinen automatischen Timeout – bleibt eine Antwort dauerhaft aus, verbleibt der Status unbegrenzt hier, bis der Admin manuell bestätigt.
 
 Zusätzlich kann das Flag `adresse_geaendert` gesetzt sein, wenn der letzte XLS-Import eine abweichende E-Mail-Adresse für dieses Mitglied enthielt.
 
 ### Bestätigung
-Das Ereignis, das den Verifikationsstatus eines Mitglieds auf `bestaetigt` setzt. Eine Bestätigung entsteht entweder durch eine direkte Antwort auf eine Verifikationsmail oder durch den Eingang eines Nachweises (Nachweis-Funktion). Eine Bestätigung ist kein explizites "JA" der Person – jede Antwort auf die Verifikationsmail zählt.
+Das Ereignis, das den Verifikationsstatus eines Mitglieds auf `bestaetigt` setzt. Eine Bestätigung entsteht automatisch durch eine direkte Antwort auf eine Verifikationsmail oder durch den Eingang eines Nachweises (Nachweis-Funktion), oder manuell durch einen Admin-Eingriff (siehe Manuelle Bestätigung). Eine automatische Bestätigung ist kein explizites "JA" der Person – jede Antwort auf die Verifikationsmail zählt. Jede Bestätigung trägt eine grobe Herkunft, `automatisch` oder `manuell` – eine feinere Unterscheidung zwischen Antwort und Nachweis wird nicht getroffen.
+
+### Manuelle Bestätigung
+Ein Admin-Eingriff, der den Verifikationsstatus eines Mitglieds direkt auf `bestaetigt` setzt, ohne dass ein automatischer Abgleich (In-Reply-To oder Nachweis) stattgefunden hat. Dient Fällen, in denen die Bestätigung nachweislich vorliegt, aber außerhalb der vom System erwarteten Kanäle eintraf – z.B. Antwort per Chat oder an eine persönliche E-Mail-Adresse statt per Reply auf die Verifikationsmail. Nur möglich, wenn bereits eine Verifikationsmail versendet wurde (Status `ausstehend` oder `re_verifikation_ausstehend`); bei `nie_geprueft` oder `ungueltige_adresse` gibt es nichts zu bestätigen. Wird in der Verifikationsliste sichtbar als "manuell bestätigt am X" vermerkt, um die abweichende Herkunft von einer systemvalidierten Bestätigung erkennbar zu halten.
 
 ### Verifikationsmail
 Eine E-Mail, die an ein Mitglied gesendet wird, um dessen E-Mail-Adresse zu bestätigen. Der Text ist über ein konfigurierbares Template einstellbar. Die `Message-ID` der gesendeten Mail wird gespeichert, um eingehende Antworten via `In-Reply-To`-Header zuzuordnen.

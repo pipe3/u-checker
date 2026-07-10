@@ -8,6 +8,9 @@
   .status-ausstehend  { color: #856404; font-weight: 600; }
   .status-bestaetigt  { color: #155724; font-weight: 600; }
   .status-ungueltige_adresse { color: #721c24; font-weight: 600; }
+  .status-re_verifikation_ausstehend { color: #856404; font-weight: 600; }
+  .herkunft-manuell { font-size: 0.75rem; color: #6c757d; }
+  .btn-sm { padding: 0.15rem 0.5rem; font-size: 0.75rem; }
   .filter-bar { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; margin-bottom: 1rem; font-size: 0.9rem; }
   .filter-bar a { color: #0d6efd; text-decoration: none; padding: 0.25rem 0.6rem; border: 1px solid #dee2e6; border-radius: 4px; }
   .filter-bar a.active { background: #0d6efd; color: #fff; border-color: #0d6efd; }
@@ -43,6 +46,8 @@
        class="{% if status_filter == 'bestaetigt' %}active{% endif %}">Bestätigt</a>
     <a href="/email-pruefung?status=ungueltige_adresse{% if sort %}&sort={{ sort }}{% endif %}"
        class="{% if status_filter == 'ungueltige_adresse' %}active{% endif %}">Ungültige Adresse</a>
+    <a href="/email-pruefung?status=re_verifikation_ausstehend{% if sort %}&sort={{ sort }}{% endif %}"
+       class="{% if status_filter == 're_verifikation_ausstehend' %}active{% endif %}">Erneute Verifikation ausstehend</a>
   </div>
 
   {% if mitglieder %}
@@ -69,6 +74,7 @@
                class="sort-link" title="Nach Bestätigungsdatum sortieren">↕</a>
           </th>
           <th>Hinweis</th>
+          <th>Aktion</th>
         </tr>
       </thead>
       <tbody>
@@ -82,13 +88,26 @@
             {% elif m["status"] == "ausstehend" %}Ausstehend
             {% elif m["status"] == "bestaetigt" %}Bestätigt
             {% elif m["status"] == "ungueltige_adresse" %}Ungültige Adresse
+            {% elif m["status"] == "re_verifikation_ausstehend" %}Erneute Verifikation ausstehend
             {% else %}{{ m["status"] }}{% endif %}
           </td>
           <td>{{ m["gesendet_am"][:10] | datum_de if m["gesendet_am"] else "–" }}</td>
-          <td>{{ m["bestaetigt_am"][:10] | datum_de if m["bestaetigt_am"] else "–" }}</td>
+          <td>
+            {{ m["bestaetigt_am"][:10] | datum_de if m["bestaetigt_am"] else "–" }}
+            {% if m["bestaetigt_am"] and m["bestaetigung_herkunft"] == "manuell" %}
+            <span class="herkunft-manuell">(manuell)</span>
+            {% endif %}
+          </td>
           <td>
             {% if m["adresse_geaendert"] %}
             <span class="badge-adresse">Adresse geändert</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if m["status"] in ("ausstehend", "re_verifikation_ausstehend") %}
+            <button type="submit" class="btn btn-outline btn-sm"
+                    formaction="/email-pruefung/{{ m['pers_nr'] }}/manuell-bestaetigen"
+                    formnovalidate>Manuell bestätigen</button>
             {% endif %}
           </td>
         </tr>

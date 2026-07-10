@@ -476,6 +476,38 @@ def test_verifikationsantwort_setzt_status_bestaetigt(db_app):
     assert row["bestaetigt_am"] is not None
 
 
+def test_verifikationsantwort_auf_re_verifikation_setzt_status_bestaetigt(db_app):
+    """Eingehende Antwort mit passendem In-Reply-To auf ein Mitglied im Status
+    re_verifikation_ausstehend setzt Status → bestaetigt, aktualisiert bestaetigt_am
+    und markiert die Herkunft als automatisch."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db", status="re_verifikation_ausstehend")
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute(
+        "UPDATE email_verifikation SET bestaetigt_am='2026-01-02T12:00:00' WHERE pers_nr='001'"
+    )
+    db.commit()
+    db.close()
+
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert row["bestaetigt_am"] != "2026-01-02T12:00:00"  # aktualisiert auf neue Antwort
+    assert row["bestaetigung_herkunft"] == "automatisch"
+
+
 def test_verifikationsantwort_erstellt_keinen_task(db_app):
     """Für Verifikationsantworten wird kein Task erstellt."""
     from web.imap_poller import poll_inbox
@@ -624,6 +656,7 @@ def test_nachweis_setzt_bestaetigt_am_bei_zugeordnetem_mitglied(db_app):
     db.close()
     assert row["status"] == "bestaetigt"
     assert row["bestaetigt_am"] is not None
+    assert row["bestaetigung_herkunft"] == "automatisch"
 
 
 def test_nachweis_aktualisiert_bestaetigt_am_wenn_bereits_bestaetigt(db_app):
@@ -660,6 +693,42 @@ def test_nachweis_aktualisiert_bestaetigt_am_wenn_bereits_bestaetigt(db_app):
     db.close()
     assert row["status"] == "bestaetigt"
     assert row["bestaetigt_am"] != "2020-01-01T00:00:00"
+
+
+def test_nachweis_ueberschreibt_stale_manuelle_herkunft(db_app):
+    """Ein eingehender Nachweis fuer ein zuvor manuell bestaetigtes Mitglied setzt
+    bestaetigung_herkunft auf 'automatisch', statt die alte 'manuell'-Herkunft stehen zu lassen."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", status="bestaetigt")
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute("UPDATE email_verifikation SET bestaetigung_herkunft = 'manuell' WHERE pers_nr = '001'")
+    db.commit()
+    db.close()
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<nachweis-3@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 1.0,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["bestaetigung_herkunft"] == "automatisch"
 
 
 def test_unklare_zuordnung_aktualisiert_verifikation_nicht(db_app):

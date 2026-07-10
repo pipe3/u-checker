@@ -185,7 +185,7 @@ def process_email(
     # Nachweis als implizite E-Mail-Bestätigung: mitglied_nr gesetzt → Adresse gilt als aktiv bestätigt
     if mitglied_nr:
         db.execute(
-            "UPDATE email_verifikation SET bestaetigt_am=?, status='bestaetigt' WHERE pers_nr=?",
+            "UPDATE email_verifikation SET bestaetigt_am=?, status='bestaetigt', bestaetigung_herkunft='automatisch' WHERE pers_nr=?",
             (empfangen_am, mitglied_nr),
         )
 
@@ -327,7 +327,7 @@ def poll_inbox(app) -> int:
                 for pers_nr, imap_msg_id in verif_replies:
                     with closing(get_db()) as db:
                         db.execute(
-                            "UPDATE email_verifikation SET status='bestaetigt', bestaetigt_am=? WHERE pers_nr=?",
+                            "UPDATE email_verifikation SET status='bestaetigt', bestaetigt_am=?, bestaetigung_herkunft='automatisch' WHERE pers_nr=?",
                             (now, pers_nr),
                         )
                         db.commit()

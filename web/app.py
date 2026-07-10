@@ -148,7 +148,8 @@ def init_db():
                 gesendet_am TEXT,
                 bestaetigt_am TEXT,
                 adresse_geaendert INTEGER NOT NULL DEFAULT 0,
-                verifikationsmail_message_id TEXT
+                verifikationsmail_message_id TEXT,
+                bestaetigung_herkunft TEXT
             )
         """)
         db.execute("""
@@ -163,6 +164,7 @@ def init_db():
             )
         """)
         _migrate_tasks(db)
+        _migrate_email_verifikation(db)
         _migrate_settings(db)
         db.commit()
 
@@ -231,6 +233,13 @@ def _migrate_tasks(db):
     for col, coltype in new_cols:
         if col not in existing:
             db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {coltype}")
+
+
+def _migrate_email_verifikation(db):
+    """Fügt fehlende Spalten zur email_verifikation-Tabelle hinzu (für bestehende DBs)."""
+    existing = {row[1] for row in db.execute("PRAGMA table_info(email_verifikation)").fetchall()}
+    if "bestaetigung_herkunft" not in existing:
+        db.execute("ALTER TABLE email_verifikation ADD COLUMN bestaetigung_herkunft TEXT")
 
 
 def get_settings() -> dict:
@@ -307,7 +316,7 @@ def index():
             "SELECT COUNT(*) FROM tasks WHERE status = 'UNKLARE_ZUORDNUNG'"
         ).fetchone()[0]
         email_ausstehend_count = db.execute(
-            "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend', 'ungueltige_adresse')"
+            "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend', 'ungueltige_adresse', 're_verifikation_ausstehend')"
         ).fetchone()[0]
 
     xls_vorhanden = _xls_path().exists()
@@ -655,7 +664,7 @@ def email_pruefung_senden():
     with closing(get_db()) as db:
         for pers_nr in pers_nrs:
             row = db.execute(
-                "SELECT vorname, nachname, email FROM email_verifikation WHERE pers_nr = ?",
+                "SELECT vorname, nachname, email, status FROM email_verifikation WHERE pers_nr = ?",
                 (pers_nr,),
             ).fetchone()
             if row is None:
@@ -678,11 +687,13 @@ def email_pruefung_senden():
                     template=verifikation_template,
                 )
                 now = datetime.now().isoformat(timespec="seconds")
+                war_bestaetigt = row["status"] in ("bestaetigt", "re_verifikation_ausstehend")
+                neuer_status = "re_verifikation_ausstehend" if war_bestaetigt else "ausstehend"
                 db.execute(
                     """UPDATE email_verifikation
-                       SET status='ausstehend', gesendet_am=?, verifikationsmail_message_id=?
+                       SET status=?, gesendet_am=?, verifikationsmail_message_id=?
                        WHERE pers_nr=?""",
-                    (now, msg_id, pers_nr),
+                    (neuer_status, now, msg_id, pers_nr),
                 )
                 db.commit()
                 gesendet += 1
@@ -692,6 +703,34 @@ def email_pruefung_senden():
 
     if gesendet > 0:
         flash(f"{gesendet} Verifikationsmail(s) versendet.", "success")
+    return redirect(url_for("email_pruefung"))
+
+
+_MANUELL_BESTAETIGBAR = {"ausstehend", "re_verifikation_ausstehend"}
+
+
+@app.route("/email-pruefung/<pers_nr>/manuell-bestaetigen", methods=["POST"])
+def email_pruefung_manuell_bestaetigen(pers_nr: str):
+    with closing(get_db()) as db:
+        row = db.execute(
+            "SELECT status FROM email_verifikation WHERE pers_nr = ?", (pers_nr,)
+        ).fetchone()
+        if row is None:
+            abort(404)
+        if row["status"] not in _MANUELL_BESTAETIGBAR:
+            flash("Manuelles Bestätigen ist für diesen Status nicht möglich.", "error")
+            return redirect(url_for("email_pruefung"))
+
+        now = datetime.now().isoformat(timespec="seconds")
+        db.execute(
+            """UPDATE email_verifikation
+               SET status='bestaetigt', bestaetigt_am=?, bestaetigung_herkunft='manuell'
+               WHERE pers_nr=?""",
+            (now, pers_nr),
+        )
+        db.commit()
+
+    flash("Mitglied wurde manuell bestätigt.", "success")
     return redirect(url_for("email_pruefung"))
 
 
