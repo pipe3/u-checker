@@ -527,3 +527,44 @@ def test_filter_chips_nur_bei_vorhandenen_typen(client, tmp_path):
     # Kein spezifischer Typ-Chip – nur Alle-Chip
     assert 'href="/nachweise?typ=' not in body
 
+
+# --- Manuelle Bestätigung ---
+
+def _db_insert_verifikation(db_path, **kwargs):
+    """Hilfsfunktion: email_verifikation-Zeile in die Test-DB einfügen."""
+    defaults = {
+        "pers_nr": "001",
+        "vorname": "Max",
+        "nachname": "Mustermann",
+        "email": "max@example.com",
+        "status": "ausstehend",
+        "adresse_geaendert": 0,
+    }
+    defaults.update(kwargs)
+    db = _sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO email_verifikation
+           (pers_nr, vorname, nachname, email, status, adresse_geaendert)
+           VALUES (:pers_nr, :vorname, :nachname, :email, :status, :adresse_geaendert)""",
+        defaults,
+    )
+    db.commit()
+    db.close()
+
+
+def test_manuell_bestaetigen_setzt_adresse_geaendert_zurueck(client, tmp_path):
+    """Manuelle Bestätigung setzt adresse_geaendert zurück (ADR 0010)."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_verifikation(db_path, status="ausstehend", adresse_geaendert=1)
+
+    response = client.post("/email-pruefung/001/manuell-bestaetigen", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = _sqlite3.connect(db_path)
+    db.row_factory = _sqlite3.Row
+    row = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert row["adresse_geaendert"] == 0
+

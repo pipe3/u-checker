@@ -724,7 +724,7 @@ def email_pruefung_manuell_bestaetigen(pers_nr: str):
         now = datetime.now().isoformat(timespec="seconds")
         db.execute(
             """UPDATE email_verifikation
-               SET status='bestaetigt', bestaetigt_am=?, bestaetigung_herkunft='manuell'
+               SET status='bestaetigt', bestaetigt_am=?, bestaetigung_herkunft='manuell', adresse_geaendert=0
                WHERE pers_nr=?""",
             (now, pers_nr),
         )
