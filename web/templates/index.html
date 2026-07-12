@@ -105,7 +105,7 @@
 
   <div class="kachel">
     <div class="kachel-titel">Eingehende Nachweise</div>
-    {% set gesamt = neu_count + unklare_count %}
+    {% set gesamt = neu_count + unklare_count + abweichend_count %}
     {% if gesamt == 0 %}
     <div class="kachel-zahl ok">0</div>
     <p class="kachel-zeile ok">Alles erledigt</p>
@@ -116,6 +116,9 @@
     {% endif %}
     {% if unklare_count > 0 %}
     <p class="kachel-zeile warn">{{ unklare_count }} brauchen manuelle Prüfung</p>
+    {% endif %}
+    {% if abweichend_count > 0 %}
+    <p class="kachel-zeile warn">{{ abweichend_count }} mit abweichender Zuordnung</p>
     {% endif %}
     {% endif %}
     <a class="kachel-link" href="{{ url_for('nachweise') }}">Nachweise öffnen →</a>

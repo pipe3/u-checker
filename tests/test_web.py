@@ -262,6 +262,10 @@ def _db_insert_task(db_path, **kwargs):
         "raw_email": None,
         "raw_text": None,
         "anhang_count": 0,
+        "kandidat_absender_nr": None,
+        "kandidat_absender_name": None,
+        "kandidat_dokument_nr": None,
+        "kandidat_dokument_name": None,
     }
     defaults.update(kwargs)
     db = _sqlite3.connect(db_path)
@@ -269,10 +273,14 @@ def _db_insert_task(db_path, **kwargs):
         """INSERT INTO tasks
            (status, empfangen_am, von_email, betreff,
             pruefungstyp, faelligkeitsdatum, mitglied_name, mitglied_nr,
-            raw_email, raw_text, anhang_count)
+            raw_email, raw_text, anhang_count,
+            kandidat_absender_nr, kandidat_absender_name,
+            kandidat_dokument_nr, kandidat_dokument_name)
            VALUES (:status, :empfangen_am, :von_email, :betreff,
                    :pruefungstyp, :faelligkeitsdatum, :mitglied_name, :mitglied_nr,
-                   :raw_email, :raw_text, :anhang_count)""",
+                   :raw_email, :raw_text, :anhang_count,
+                   :kandidat_absender_nr, :kandidat_absender_name,
+                   :kandidat_dokument_nr, :kandidat_dokument_name)""",
         defaults,
     )
     task_id = cursor.lastrowid
@@ -404,6 +412,126 @@ def test_nachweise_unklare_zuordnung_fallback_erledigt_ohne_xls(client, tmp_path
     assert f"/tasks/{task_id}/erledigt" in body
 
 
+def test_nachweise_karte_abweichende_zuordnung_css_klasse(client, tmp_path):
+    """ABWEICHENDE_ZUORDNUNG-Karten tragen die CSS-Klasse karte-abweichende-zuordnung."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+
+    response = client.get("/nachweise")
+    assert b"karte-abweichende-zuordnung" in response.data
+
+
+def test_nachweise_abweichende_zuordnung_zeigt_zwei_kandidaten(client, tmp_path):
+    """Beide Kandidaten erscheinen als anklickbare Vorschläge mit Rollenbezeichnung."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path,
+        status="ABWEICHENDE_ZUORDNUNG",
+        kandidat_absender_nr="001",
+        kandidat_absender_name="Max Mustermann",
+        kandidat_dokument_nr="002",
+        kandidat_dokument_name="Erika Musterfrau",
+    )
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert "Max Mustermann" in body
+    assert "Erika Musterfrau" in body
+    assert "Absender" in body
+    assert "im Dokument erkannt" in body
+    assert body.count(f'/tasks/{task_id}/zuordnen') >= 2
+
+
+def test_nachweise_abweichende_zuordnung_zeigt_erledigt_button(client, tmp_path):
+    """ABWEICHENDE_ZUORDNUNG-Karte kann direkt über Erledigt abgeschlossen werden."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/erledigt" in body
+
+
+def test_zuordnen_via_kandidat_button_setzt_status_neu(client, tmp_path):
+    """Klick auf einen Kandidaten-Button (POST /zuordnen mit vorbelegter pers_nr) löst den Task auf."""
+    import sqlite3
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path,
+        status="ABWEICHENDE_ZUORDNUNG",
+        kandidat_absender_nr="001",
+        kandidat_absender_name="Max Mustermann",
+        kandidat_dokument_nr="002",
+        kandidat_dokument_name="Erika Musterfrau",
+    )
+
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.extractor.load_members_from_xls", return_value=[
+        {"pers_nr": "002", "vorname": "Erika", "nachname": "Musterfrau"}
+    ]):
+        response = client.post(f"/tasks/{task_id}/zuordnen", data={"pers_nr": "002"}, follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "NEU"
+    assert row["mitglied_nr"] == "002"
+    assert row["kandidat_absender_nr"] is None
+    assert row["kandidat_dokument_nr"] is None
+
+
+def test_abweichende_zuordnung_loeschbar(client, tmp_path):
+    """ABWEICHENDE_ZUORDNUNG-Tasks können wie UNKLARE_ZUORDNUNG gelöscht werden."""
+    import sqlite3
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+
+    response = client.post(f"/tasks/{task_id}/loeschen", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    row = db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row is None
+
+
+def test_abweichende_zuordnung_erledigt_ohne_zuordnung(client, tmp_path):
+    """ABWEICHENDE_ZUORDNUNG kann direkt über Erledigt abgeschlossen werden, ohne vorherige Zuordnung."""
+    import sqlite3
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+
+    response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "ERLEDIGT"
+
+
+def test_dashboard_zaehlt_abweichende_zuordnung(client, tmp_path):
+    """Dashboard zeigt eine Zählung für offene ABWEICHENDE_ZUORDNUNG-Tasks."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+    _db_insert_task(db_path, status="ABWEICHENDE_ZUORDNUNG")
+
+    response = client.get("/")
+    body = response.data.decode()
+    assert "2" in body
+    assert "abweichende" in body.lower()
+
+
 def test_nachweise_pdf_anhang_reanalyse_buttons(client, tmp_path):
     """PDF, Anhang-Link und Re-Analyse-Button sind auf Karten vorhanden."""
     import email as _email_lib
@@ -419,6 +547,44 @@ def test_nachweise_pdf_anhang_reanalyse_buttons(client, tmp_path):
     assert f"/tasks/{task_id}/pdf" in body
     assert f"/tasks/{task_id}/anhang/" in body
     assert f"/tasks/{task_id}/reanalyse" in body
+
+
+def test_reanalyse_erzeugt_abweichende_zuordnung(client, tmp_path):
+    """Re-Analyse erzeugt denselben ABWEICHENDE_ZUORDNUNG-Status wie der reguläre IMAP-Eingang (Issue #38)."""
+    import sqlite3
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+
+    raw = b"From: Max Mustermann <max@example.com>\r\nSubject: Nachweis\r\n\r\nBody"
+    task_id = _db_insert_task(db_path, status="NEU", raw_email=raw, mitglied_nr="001", mitglied_name="Max Mustermann")
+
+    members = [
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Mustermann", "email": "max@example.com"},
+        {"pers_nr": "002", "vorname": "Erika", "nachname": "Musterfrau", "email": "erika@example.com"},
+    ]
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": members[0],
+        "match_score": 0.95,
+        "dokument_mitglied": members[1],
+        "dokument_match_score": 0.9,
+        "raw_text": "G25",
+    }
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.extractor.load_members_from_xls", return_value=members), \
+         patch("web.extractor.extract_from_email", return_value=extraction):
+        response = client.post(f"/tasks/{task_id}/reanalyse", follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "ABWEICHENDE_ZUORDNUNG"
+    assert row["mitglied_nr"] is None
+    assert row["kandidat_absender_nr"] == "001"
+    assert row["kandidat_dokument_nr"] == "002"
 
 
 # --- /nachweise?typ=: Issue #31 ---

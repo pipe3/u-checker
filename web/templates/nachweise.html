@@ -13,6 +13,15 @@
   .karte { border: 1px solid #dee2e6; border-radius: 6px; padding: 1rem 1rem 1rem 1.2rem; border-left-width: 5px; }
   .karte-neu { border-left-color: #0d6efd; }
   .karte-unklare-zuordnung { border-left-color: #fd7e14; }
+  .karte-abweichende-zuordnung { border-left-color: #dc3545; }
+
+  .kandidaten-zeile { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+  .kandidat-btn {
+    display: block; text-align: left; font-size: 0.8rem; padding: 0.3rem 0.6rem;
+    border: 1px solid #dee2e6; border-radius: 4px; background: #f8f9fa; cursor: pointer;
+  }
+  .kandidat-btn:hover { background: #e9ecef; }
+  .kandidat-btn .rolle { color: #6c757d; font-size: 0.75rem; }
 
   .karte-haupt { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
   .karte-info-primaer { flex: 1; min-width: 200px; }
@@ -93,6 +102,45 @@
 
       <div class="karte-aktionen">
         {% if task["status"] == "NEU" %}
+        <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>
+        </form>
+        {% elif task["status"] == "ABWEICHENDE_ZUORDNUNG" %}
+        <div class="kandidaten-zeile">
+          {% if task["kandidat_absender_nr"] %}
+          <form action="/tasks/{{ task['id'] }}/zuordnen" method="post" style="margin:0;">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+            <input type="hidden" name="pers_nr" value="{{ task['kandidat_absender_nr'] }}">
+            <button type="submit" class="kandidat-btn">
+              <span class="rolle">Absender</span><br>{{ task["kandidat_absender_name"] }}
+            </button>
+          </form>
+          {% endif %}
+          {% if task["kandidat_dokument_nr"] %}
+          <form action="/tasks/{{ task['id'] }}/zuordnen" method="post" style="margin:0;">
+            {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+            <input type="hidden" name="pers_nr" value="{{ task['kandidat_dokument_nr'] }}">
+            <button type="submit" class="kandidat-btn">
+              <span class="rolle">im Dokument erkannt</span><br>{{ task["kandidat_dokument_name"] }}
+            </button>
+          </form>
+          {% endif %}
+        </div>
+        {% if members %}
+        <form action="/tasks/{{ task['id'] }}/zuordnen" method="post">
+          {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
+          <div class="zuordnen-zeile">
+            <select name="pers_nr" class="mitglied-select" required>
+              <option value="">Anderes Mitglied wählen …</option>
+              {% for m in members %}
+              <option value="{{ m.pers_nr }}">{{ m.nachname }}, {{ m.vorname }}</option>
+              {% endfor %}
+            </select>
+            <button type="submit" class="secondary" style="font-size:0.8rem;padding:0.25rem 0.6rem;">Zuordnen</button>
+          </div>
+        </form>
+        {% endif %}
         <form action="/tasks/{{ task['id'] }}/erledigt" method="post">
           {% if aktiver_typ %}<input type="hidden" name="typ" value="{{ aktiver_typ }}">{% endif %}
           <button type="submit" class="erledigt" style="font-size:0.85rem;">Erledigt</button>

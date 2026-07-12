@@ -12,7 +12,12 @@ from contextlib import closing
 from datetime import datetime
 from email.mime.text import MIMEText
 
-from web.extractor import MATCH_THRESHOLD, extract_from_email, load_members_from_xls, _iter_dokument_parts
+from web.extractor import (
+    bestimme_zuordnung,
+    extract_from_email,
+    load_members_from_xls,
+    _iter_dokument_parts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,23 +152,13 @@ def process_email(
 
     pruefungstyp = extraction["pruefungstyp"]
     faelligkeitsdatum = extraction["faelligkeitsdatum"]
-    matched_member = extraction["mitglied"]
-    match_score = extraction["match_score"]
+
+    zuordnung = bestimme_zuordnung(extraction, members)
+    status = zuordnung["status"]
+    mitglied_nr = zuordnung["mitglied_nr"]
+    mitglied_name = zuordnung["mitglied_name"]
 
     faelligkeitsdatum_str = faelligkeitsdatum.isoformat() if faelligkeitsdatum else None
-
-    if members and match_score < MATCH_THRESHOLD:
-        status = "UNKLARE_ZUORDNUNG"
-        mitglied_nr = None
-        mitglied_name = None
-    elif matched_member:
-        status = "NEU"
-        mitglied_nr = matched_member["pers_nr"]
-        mitglied_name = f"{matched_member['vorname']} {matched_member['nachname']}"
-    else:
-        status = "NEU"
-        mitglied_nr = None
-        mitglied_name = None
 
     empfangen_am = datetime.now().isoformat(timespec="seconds")
     raw_text = extraction["raw_text"] or None
@@ -171,19 +166,22 @@ def process_email(
         """INSERT INTO tasks
                (status, empfangen_am, von_email, von_name, betreff, message_id, raw_email,
                 anhang_count, pruefungstyp, faelligkeitsdatum, mitglied_nr, mitglied_name, raw_text,
-                imap_uid)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                imap_uid, kandidat_absender_nr, kandidat_absender_name,
+                kandidat_dokument_nr, kandidat_dokument_name)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             status, empfangen_am, von_email or None, von_name or None, betreff or None,
             dedup_key, raw_bytes, anhang_count,
             pruefungstyp, faelligkeitsdatum_str, mitglied_nr, mitglied_name, raw_text,
-            imap_uid,
+            imap_uid, zuordnung["kandidat_absender_nr"], zuordnung["kandidat_absender_name"],
+            zuordnung["kandidat_dokument_nr"], zuordnung["kandidat_dokument_name"],
         ),
     )
     task_id = cursor.lastrowid
 
-    # Nachweis als implizite E-Mail-Bestätigung: mitglied_nr gesetzt → Adresse gilt als aktiv bestätigt
-    if mitglied_nr:
+    # Nachweis als implizite E-Mail-Bestätigung: nur wenn die zugeordnete Person
+    # tatsächlich mit dem Absender übereinstimmt (ADR 0003, präzisiert in Issue #38).
+    if mitglied_nr and zuordnung["sender_bestaetigt"]:
         db.execute(
             "UPDATE email_verifikation SET bestaetigt_am=?, status='bestaetigt', bestaetigung_herkunft='automatisch', adresse_geaendert=0 WHERE pers_nr=?",
             (empfangen_am, mitglied_nr),

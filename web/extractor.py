@@ -86,8 +86,23 @@ def _iter_dokument_parts(msg):
                 yield ct, filename, payload
 
 
-def collect_text_from_email(msg) -> str:
-    """Sammelt Text aus Body und Anhängen (PDF + Bild) einer Email."""
+def collect_text_from_dokumente(msg) -> str:
+    """Sammelt Text ausschließlich aus Dokument-Anhängen (PDF + Bild), nicht aus dem Mail-Body."""
+    parts: list[str] = []
+    for ct, _filename, payload in _iter_dokument_parts(msg):
+        if ct == "application/pdf":
+            parts.append(extract_text_from_pdf(payload))
+        else:
+            parts.append(extract_text_from_image(payload))
+    return "\n".join(p for p in parts if p)
+
+
+def collect_text_from_email(msg, dokument_text: Optional[str] = None) -> str:
+    """Sammelt Text aus Body und Anhängen (PDF + Bild) einer Email.
+
+    dokument_text kann vorab berechnet übergeben werden, um doppelte (teure) OCR-/PDF-Extraktion
+    zu vermeiden, wenn der Aufrufer den Anhang-Text ohnehin bereits separat benötigt.
+    """
     parts: list[str] = []
     for part in msg.walk():
         ct = part.get_content_type()
@@ -96,11 +111,10 @@ def collect_text_from_email(msg) -> str:
             payload = part.get_payload(decode=True)
             if payload:
                 parts.append(payload.decode("utf-8", errors="replace"))
-    for ct, _filename, payload in _iter_dokument_parts(msg):
-        if ct == "application/pdf":
-            parts.append(extract_text_from_pdf(payload))
-        else:
-            parts.append(extract_text_from_image(payload))
+    if dokument_text is None:
+        dokument_text = collect_text_from_dokumente(msg)
+    if dokument_text:
+        parts.append(dokument_text)
     return "\n".join(p for p in parts if p)
 
 
@@ -220,13 +234,33 @@ def fuzzy_match_member(name: str, members: list[dict]) -> tuple[Optional[dict], 
         return None, 0.0
 
 
+def fuzzy_match_member_in_text(text: str, members: list[dict]) -> tuple[Optional[dict], float]:
+    """Zeilenweiser Fuzzy-Match gegen die Mitgliederliste. Gibt den besten Treffer über alle Zeilen zurück."""
+    best_member: Optional[dict] = None
+    best_score = 0.0
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        member, score = fuzzy_match_member(line, members)
+        if score > best_score:
+            best_member, best_score = member, score
+    return best_member, best_score
+
+
 def extract_from_email(msg, valid_types: list[str], members: list[dict]) -> dict:
     """
     Extrahiert Prüfungstyp, Datum und Mitglied aus einer Email (inkl. Anhänge).
 
-    Rückgabe: {pruefungstyp, faelligkeitsdatum, mitglied, match_score, raw_text}
+    Ermittelt zwei unabhängige Zuordnungskandidaten: den Absender-Kandidaten (From-Header)
+    und den Dokument-Kandidaten (zeilenweiser Fuzzy-Match ausschließlich im Anhang-Text,
+    nicht im Mail-Body – siehe Issue #38).
+
+    Rückgabe: {pruefungstyp, faelligkeitsdatum, mitglied, match_score,
+               dokument_mitglied, dokument_match_score, raw_text}
     """
-    raw_text = collect_text_from_email(msg)
+    dokument_text = collect_text_from_dokumente(msg)
+    raw_text = collect_text_from_email(msg, dokument_text)
 
     pruefungstyp = parse_pruefungstyp(raw_text, valid_types)
     faelligkeitsdatum = parse_datum(raw_text)
@@ -237,10 +271,73 @@ def extract_from_email(msg, valid_types: list[str], members: list[dict]) -> dict
 
     matched_member, score = fuzzy_match_member(sender_name, members)
 
+    dokument_member, dokument_score = fuzzy_match_member_in_text(dokument_text, members)
+
     return {
         "pruefungstyp": pruefungstyp,
         "faelligkeitsdatum": faelligkeitsdatum,
         "mitglied": matched_member,
         "match_score": score,
+        "dokument_mitglied": dokument_member,
+        "dokument_match_score": dokument_score,
         "raw_text": raw_text,
     }
+
+
+def bestimme_zuordnung(extraction: dict, members: list[dict]) -> dict:
+    """
+    Bündelt die Zuordnungsentscheidung aus Absender- und Dokument-Kandidat (Issue #38).
+
+    Wird sowohl vom IMAP-Poller-Eingang als auch von der Re-Analyse-Funktion verwendet,
+    damit sich beide Wege identisch verhalten.
+
+    Rückgabe: {status, mitglied_nr, mitglied_name, sender_bestaetigt,
+               kandidat_absender_nr, kandidat_absender_name,
+               kandidat_dokument_nr, kandidat_dokument_name}
+
+    status ist einer von NEU / UNKLARE_ZUORDNUNG / ABWEICHENDE_ZUORDNUNG.
+    sender_bestaetigt ist True, wenn die zugeordnete Person tatsächlich mit dem
+    Absender-Kandidaten übereinstimmt (relevant für die implizite E-Mail-Bestätigung).
+    """
+    sender_member = extraction["mitglied"]
+    sender_score = extraction["match_score"]
+    dokument_member = extraction.get("dokument_mitglied")
+    dokument_score = extraction.get("dokument_match_score", 0.0)
+
+    sender_match = bool(members) and sender_score >= MATCH_THRESHOLD and sender_member is not None
+    dokument_match = bool(members) and dokument_score >= MATCH_THRESHOLD and dokument_member is not None
+
+    result = {
+        "status": "NEU",
+        "mitglied_nr": None,
+        "mitglied_name": None,
+        "sender_bestaetigt": False,
+        "kandidat_absender_nr": None,
+        "kandidat_absender_name": None,
+        "kandidat_dokument_nr": None,
+        "kandidat_dokument_name": None,
+    }
+
+    if sender_match and dokument_match and sender_member["pers_nr"] != dokument_member["pers_nr"]:
+        result["status"] = "ABWEICHENDE_ZUORDNUNG"
+        result["kandidat_absender_nr"] = sender_member["pers_nr"]
+        result["kandidat_absender_name"] = f"{sender_member['vorname']} {sender_member['nachname']}"
+        result["kandidat_dokument_nr"] = dokument_member["pers_nr"]
+        result["kandidat_dokument_name"] = f"{dokument_member['vorname']} {dokument_member['nachname']}"
+        return result
+
+    if sender_match:
+        gewaehlt = sender_member
+        result["sender_bestaetigt"] = True
+    elif dokument_match:
+        gewaehlt = dokument_member
+    elif members:
+        # Mitgliederliste vorhanden, aber weder Absender noch Dokument eindeutig
+        result["status"] = "UNKLARE_ZUORDNUNG"
+        return result
+    else:
+        return result
+
+    result["mitglied_nr"] = gewaehlt["pers_nr"]
+    result["mitglied_name"] = f"{gewaehlt['vorname']} {gewaehlt['nachname']}"
+    return result

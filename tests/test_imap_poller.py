@@ -854,6 +854,157 @@ def test_nachweis_ohne_mitglied_match_aktualisiert_verifikation_nicht(db_app):
     assert row["bestaetigt_am"] is None
 
 
+# --- Abweichende Zuordnung (Issue #38) ---
+
+_MEMBER_B = {"pers_nr": "002", "vorname": "Erika", "nachname": "Musterfrau", "email": "erika@example.com"}
+_MEMBERS_AB = [_MEMBERS[0], _MEMBER_B]
+
+
+def test_process_email_abweichende_zuordnung(db_app):
+    """Absender matched Mitglied A, Dokument nennt eindeutig Mitglied B → ABWEICHENDE_ZUORDNUNG."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<abweichend-1@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 0.95,
+        "dokument_mitglied": _MEMBER_B,
+        "dokument_match_score": 0.9,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS_AB), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM tasks LIMIT 1").fetchone()
+    db.close()
+    assert row["status"] == "ABWEICHENDE_ZUORDNUNG"
+    assert row["mitglied_nr"] is None
+    assert row["kandidat_absender_nr"] == "001"
+    assert row["kandidat_absender_name"] == "Max Mustermann"
+    assert row["kandidat_dokument_nr"] == "002"
+    assert row["kandidat_dokument_name"] == "Erika Musterfrau"
+
+
+def test_process_email_abweichende_zuordnung_aendert_verifikation_nicht(db_app):
+    """ABWEICHENDE_ZUORDNUNG darf email_verifikation weder für A noch B ändern."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", pers_nr="001", status="ausstehend")
+    _insert_verifikation_for_member(db_app / "checker.db", pers_nr="002", status="ausstehend")
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<abweichend-2@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 0.95,
+        "dokument_mitglied": _MEMBER_B,
+        "dokument_match_score": 0.9,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS_AB), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = db.execute("SELECT * FROM email_verifikation").fetchall()
+    db.close()
+    for row in rows:
+        assert row["status"] == "ausstehend"
+        assert row["bestaetigt_am"] is None
+
+
+def test_process_email_nur_dokument_match_bestaetigt_absender_nicht(db_app):
+    """Absender matched niemanden, Dokument nennt eindeutig B → NEU mit B, aber
+    E-Mail-Bestätigung von B wird NICHT ausgelöst (B hat die Mail nicht selbst geschickt)."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", pers_nr="002", status="ausstehend")
+
+    raw = _make_raw_email(from_addr="Weiterleiter <weiterleiter@example.com>", message_id="<nur-dok-1@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": None,
+        "match_score": 0.2,
+        "dokument_mitglied": _MEMBER_B,
+        "dokument_match_score": 0.9,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS_AB), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    task = db.execute("SELECT * FROM tasks LIMIT 1").fetchone()
+    verif = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '002'").fetchone()
+    db.close()
+
+    assert task["status"] == "NEU"
+    assert task["mitglied_nr"] == "002"
+    assert verif["status"] == "ausstehend"
+    assert verif["bestaetigt_am"] is None
+
+
+def test_process_email_nur_absender_match_bestaetigt_wie_bisher(db_app):
+    """Nur Absender matched (kein Dokument-Match) → NEU, implizite Bestätigung wie bisher."""
+    from web.imap_poller import process_email
+    from web.app import get_db
+
+    _insert_verifikation_for_member(db_app / "checker.db", pers_nr="001", status="ausstehend")
+
+    raw = _make_raw_email(from_addr="Max Mustermann <max@example.com>", message_id="<nur-abs-1@example.com>")
+    extraction = {
+        "pruefungstyp": "G25",
+        "faelligkeitsdatum": None,
+        "mitglied": _MEMBERS[0],
+        "match_score": 0.95,
+        "dokument_mitglied": None,
+        "dokument_match_score": 0.1,
+        "raw_text": "G25",
+    }
+
+    with app.app_context():
+        with patch("web.imap_poller.load_members_from_xls", return_value=_MEMBERS_AB), \
+             patch("web.imap_poller.extract_from_email", return_value=extraction):
+            with closing(get_db()) as db:
+                process_email(db, raw, xls_path="/fake/path.xls", pruefungstypen=["G25"])
+                db.commit()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    task = db.execute("SELECT * FROM tasks LIMIT 1").fetchone()
+    verif = db.execute("SELECT * FROM email_verifikation WHERE pers_nr = '001'").fetchone()
+    db.close()
+
+    assert task["status"] == "NEU"
+    assert task["mitglied_nr"] == "001"
+    assert verif["status"] == "bestaetigt"
+    assert verif["bestaetigt_am"] is not None
+
+
 # --- IMAP-UID Speicherung ---
 
 def test_poll_speichert_imap_uid(db_app):

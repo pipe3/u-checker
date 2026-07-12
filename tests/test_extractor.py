@@ -11,9 +11,12 @@ import pytest
 
 from web.extractor import (
     MATCH_THRESHOLD,
+    bestimme_zuordnung,
+    collect_text_from_dokumente,
     collect_text_from_email,
     extract_from_email,
     fuzzy_match_member,
+    fuzzy_match_member_in_text,
     parse_datum,
     parse_pruefungstyp,
 )
@@ -255,3 +258,140 @@ def test_extraktion_ohne_mitgliederliste():
     assert result["pruefungstyp"] == "G25"
     assert result["mitglied"] is None
     assert result["match_score"] == 0.0
+
+
+# ---------- fuzzy_match_member_in_text ----------
+
+def test_fuzzy_match_in_text_findet_zeile():
+    text = "Untersuchungsbescheinigung\nErika Musterfrau\nG25 gültig bis 31.12.2026"
+    member, score = fuzzy_match_member_in_text(text, MEMBERS)
+    assert member is not None
+    assert member["pers_nr"] == "002"
+    assert score >= MATCH_THRESHOLD
+
+
+def test_fuzzy_match_in_text_ignoriert_leere_zeilen():
+    text = "\n\nMax Mustermann\n\n"
+    member, score = fuzzy_match_member_in_text(text, MEMBERS)
+    assert member is not None
+    assert member["pers_nr"] == "001"
+
+
+def test_fuzzy_match_in_text_kein_treffer():
+    text = "Nichts Erkennbares\nAuch nicht hier"
+    member, score = fuzzy_match_member_in_text(text, MEMBERS)
+    assert score < MATCH_THRESHOLD
+
+
+def test_fuzzy_match_in_text_leerer_text():
+    member, score = fuzzy_match_member_in_text("", MEMBERS)
+    assert member is None
+    assert score == 0.0
+
+
+# ---------- collect_text_from_dokumente (Body-Ausschluss) ----------
+
+def test_collect_text_aus_dokumenten_ignoriert_body():
+    msg = _pdf_email("Max Mustermann <max@example.com>")
+    with patch("web.extractor.extract_text_from_pdf", return_value="Erika Musterfrau"):
+        text = collect_text_from_dokumente(msg)
+    assert "Anbei mein Nachweis" not in text
+    assert "Erika Musterfrau" in text
+
+
+def test_collect_text_aus_dokumenten_ohne_anhang_ist_leer():
+    msg = _text_email("Max <max@x.com>", "Nur Body-Text, kein Anhang.")
+    assert collect_text_from_dokumente(msg) == ""
+
+
+# ---------- extract_from_email: Dokument-Kandidat ----------
+
+def test_extraktion_dokument_kandidat_aus_pdf():
+    """Absender matched niemanden, PDF-Anhang nennt eindeutig ein Mitglied."""
+    msg = _pdf_email("Weiterleiter <weiterleiter@example.com>")
+    with patch("web.extractor.extract_text_from_pdf", return_value="Erika Musterfrau\nG25 gültig bis 31.12.2026"):
+        result = extract_from_email(msg, VALID_TYPES, MEMBERS)
+
+    assert result["match_score"] < MATCH_THRESHOLD
+    assert result["dokument_mitglied"] is not None
+    assert result["dokument_mitglied"]["pers_nr"] == "002"
+    assert result["dokument_match_score"] >= MATCH_THRESHOLD
+
+
+def test_extraktion_dokument_kandidat_ignoriert_signatur_im_body():
+    """Body enthält Signatur des Absenders – darf den Dokument-Kandidaten nicht beeinflussen."""
+    msg = email.mime.multipart.MIMEMultipart()
+    msg["From"] = "Max Mustermann <max@example.com>"
+    msg["Subject"] = "Nachweis"
+    msg["Message-ID"] = "<sig@x.com>"
+    msg.attach(email.mime.text.MIMEText("Anbei der Nachweis.\n\nMit freundlichen Grüßen\nMax Mustermann"))
+    att = email.mime.application.MIMEApplication(b"%PDF-1.4 fake", _subtype="pdf")
+    att.add_header("Content-Disposition", "attachment", filename="nachweis.pdf")
+    msg.attach(att)
+
+    with patch("web.extractor.extract_text_from_pdf", return_value="Erika Musterfrau\nG25 gültig bis 31.12.2026"):
+        result = extract_from_email(msg, VALID_TYPES, MEMBERS)
+
+    assert result["mitglied"]["pers_nr"] == "001"
+    assert result["dokument_mitglied"]["pers_nr"] == "002"
+
+
+# ---------- bestimme_zuordnung ----------
+
+def _extraction(mitglied=None, score=0.0, dokument_mitglied=None, dokument_score=0.0) -> dict:
+    return {
+        "mitglied": mitglied,
+        "match_score": score,
+        "dokument_mitglied": dokument_mitglied,
+        "dokument_match_score": dokument_score,
+    }
+
+
+def test_zuordnung_weder_absender_noch_dokument_match():
+    extraction = _extraction(score=0.2, dokument_score=0.1)
+    result = bestimme_zuordnung(extraction, MEMBERS)
+    assert result["status"] == "UNKLARE_ZUORDNUNG"
+    assert result["mitglied_nr"] is None
+
+
+def test_zuordnung_nur_absender_match():
+    extraction = _extraction(mitglied=MEMBERS[0], score=0.95, dokument_score=0.1)
+    result = bestimme_zuordnung(extraction, MEMBERS)
+    assert result["status"] == "NEU"
+    assert result["mitglied_nr"] == "001"
+    assert result["sender_bestaetigt"] is True
+
+
+def test_zuordnung_nur_dokument_match():
+    extraction = _extraction(score=0.1, dokument_mitglied=MEMBERS[1], dokument_score=0.95)
+    result = bestimme_zuordnung(extraction, MEMBERS)
+    assert result["status"] == "NEU"
+    assert result["mitglied_nr"] == "002"
+    assert result["sender_bestaetigt"] is False
+
+
+def test_zuordnung_beide_match_gleiche_person():
+    extraction = _extraction(mitglied=MEMBERS[0], score=0.95, dokument_mitglied=MEMBERS[0], dokument_score=0.9)
+    result = bestimme_zuordnung(extraction, MEMBERS)
+    assert result["status"] == "NEU"
+    assert result["mitglied_nr"] == "001"
+    assert result["sender_bestaetigt"] is True
+
+
+def test_zuordnung_beide_match_unterschiedliche_personen():
+    extraction = _extraction(mitglied=MEMBERS[0], score=0.95, dokument_mitglied=MEMBERS[1], dokument_score=0.9)
+    result = bestimme_zuordnung(extraction, MEMBERS)
+    assert result["status"] == "ABWEICHENDE_ZUORDNUNG"
+    assert result["mitglied_nr"] is None
+    assert result["kandidat_absender_nr"] == "001"
+    assert result["kandidat_absender_name"] == "Max Mustermann"
+    assert result["kandidat_dokument_nr"] == "002"
+    assert result["kandidat_dokument_name"] == "Erika Musterfrau"
+    assert result["sender_bestaetigt"] is False
+
+
+def test_zuordnung_ohne_mitgliederliste():
+    extraction = _extraction(score=0.0, dokument_score=0.0)
+    result = bestimme_zuordnung(extraction, [])
+    assert result["status"] == "NEU"
+    assert result["mitglied_nr"] is None

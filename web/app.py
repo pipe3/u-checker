@@ -229,6 +229,10 @@ def _migrate_tasks(db):
         ("erledigt_am", "TEXT"),
         ("raw_text", "TEXT"),
         ("imap_uid", "TEXT"),
+        ("kandidat_absender_nr", "TEXT"),
+        ("kandidat_absender_name", "TEXT"),
+        ("kandidat_dokument_nr", "TEXT"),
+        ("kandidat_dokument_name", "TEXT"),
     ]
     for col, coltype in new_cols:
         if col not in existing:
@@ -315,6 +319,9 @@ def index():
         unklare_count = db.execute(
             "SELECT COUNT(*) FROM tasks WHERE status = 'UNKLARE_ZUORDNUNG'"
         ).fetchone()[0]
+        abweichend_count = db.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status = 'ABWEICHENDE_ZUORDNUNG'"
+        ).fetchone()[0]
         email_ausstehend_count = db.execute(
             "SELECT COUNT(*) FROM email_verifikation WHERE status IN ('nie_geprueft', 'ausstehend', 'ungueltige_adresse', 're_verifikation_ausstehend')"
         ).fetchone()[0]
@@ -338,6 +345,7 @@ def index():
         "index.html",
         neu_count=neu_count,
         unklare_count=unklare_count,
+        abweichend_count=abweichend_count,
         email_ausstehend_count=email_ausstehend_count,
         xls_vorhanden=xls_vorhanden,
         xls_dateiname=xls_dateiname,
@@ -354,11 +362,11 @@ def _nachweise_url() -> str:
 @app.route("/nachweise")
 def nachweise():
     typ_filter = request.args.get("typ", "").strip()
-    _base = "SELECT * FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG')"
+    _base = "SELECT * FROM tasks WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG', 'ABWEICHENDE_ZUORDNUNG')"
     with closing(get_db()) as db:
         typen_rows = db.execute(
             "SELECT DISTINCT pruefungstyp FROM tasks"
-            " WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG') AND pruefungstyp IS NOT NULL"
+            " WHERE status IN ('NEU', 'UNKLARE_ZUORDNUNG', 'ABWEICHENDE_ZUORDNUNG') AND pruefungstyp IS NOT NULL"
             " ORDER BY pruefungstyp"
         ).fetchall()
         if typ_filter:
@@ -372,7 +380,7 @@ def nachweise():
     verfuegbare_typen = [r["pruefungstyp"] for r in typen_rows]
 
     members = []
-    if _xls_path().exists() and any(t["status"] == "UNKLARE_ZUORDNUNG" for t in tasks):
+    if _xls_path().exists() and any(t["status"] in ("UNKLARE_ZUORDNUNG", "ABWEICHENDE_ZUORDNUNG") for t in tasks):
         members = load_members_from_xls(str(_xls_path()))
 
     return render_template(
@@ -403,7 +411,9 @@ def task_zuordnen(task_id: int):
         if db.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
             abort(404)
         db.execute(
-            "UPDATE tasks SET mitglied_nr = ?, mitglied_name = ?, status = 'NEU' WHERE id = ?",
+            """UPDATE tasks SET mitglied_nr = ?, mitglied_name = ?, status = 'NEU',
+               kandidat_absender_nr = NULL, kandidat_absender_name = NULL,
+               kandidat_dokument_nr = NULL, kandidat_dokument_name = NULL WHERE id = ?""",
             (pers_nr, mitglied_name, task_id),
         )
         db.commit()
@@ -423,7 +433,7 @@ def task_reanalyse(task_id: int):
             return redirect(_nachweise_url())
 
         import email as email_lib
-        from web.extractor import extract_from_email, load_members_from_xls, _iter_dokument_parts
+        from web.extractor import bestimme_zuordnung, extract_from_email, load_members_from_xls, _iter_dokument_parts
         cfg = get_settings()
         members = load_members_from_xls(str(_xls_path())) if _xls_path().exists() else []
         pruefungstypen_list = [t.strip() for t in (cfg.get("pruefungstypen") or "G25").split(",") if t.strip()]
@@ -435,29 +445,25 @@ def task_reanalyse(task_id: int):
         pruefungstyp = extraction["pruefungstyp"]
         faelligkeitsdatum = extraction["faelligkeitsdatum"]
         raw_text = extraction["raw_text"] or None
-        matched_member = extraction["mitglied"]
-        match_score = extraction["match_score"]
 
-        from web.extractor import MATCH_THRESHOLD as threshold
-
-        if members and match_score < threshold:
-            new_status = "UNKLARE_ZUORDNUNG"
-            mitglied_nr = None
-            mitglied_name = None
-        elif matched_member:
-            new_status = "NEU"
-            mitglied_nr = matched_member["pers_nr"]
-            mitglied_name = f"{matched_member['vorname']} {matched_member['nachname']}"
-        else:
-            new_status = "NEU"
-            mitglied_nr = None
-            mitglied_name = None
+        zuordnung = bestimme_zuordnung(extraction, members)
+        new_status = zuordnung["status"]
+        mitglied_nr = zuordnung["mitglied_nr"]
+        mitglied_name = zuordnung["mitglied_name"]
 
         faelligkeitsdatum_str = faelligkeitsdatum.isoformat() if faelligkeitsdatum else None
         db.execute(
             """UPDATE tasks SET pruefungstyp = ?, faelligkeitsdatum = ?, raw_text = ?,
-               mitglied_nr = ?, mitglied_name = ?, status = ?, anhang_count = ? WHERE id = ?""",
-            (pruefungstyp, faelligkeitsdatum_str, raw_text, mitglied_nr, mitglied_name, new_status, anhang_count, task_id),
+               mitglied_nr = ?, mitglied_name = ?, status = ?, anhang_count = ?,
+               kandidat_absender_nr = ?, kandidat_absender_name = ?,
+               kandidat_dokument_nr = ?, kandidat_dokument_name = ? WHERE id = ?""",
+            (
+                pruefungstyp, faelligkeitsdatum_str, raw_text, mitglied_nr, mitglied_name,
+                new_status, anhang_count,
+                zuordnung["kandidat_absender_nr"], zuordnung["kandidat_absender_name"],
+                zuordnung["kandidat_dokument_nr"], zuordnung["kandidat_dokument_name"],
+                task_id,
+            ),
         )
         db.commit()
 
@@ -469,7 +475,7 @@ def task_reanalyse(task_id: int):
 def task_loeschen(task_id: int):
     with closing(get_db()) as db:
         row = db.execute(
-            "SELECT id, imap_uid FROM tasks WHERE id = ? AND status IN ('NEU', 'UNKLARE_ZUORDNUNG')",
+            "SELECT id, imap_uid FROM tasks WHERE id = ? AND status IN ('NEU', 'UNKLARE_ZUORDNUNG', 'ABWEICHENDE_ZUORDNUNG')",
             (task_id,),
         ).fetchone()
         if row is None:
@@ -493,13 +499,18 @@ def task_loeschen(task_id: int):
 def task_wiederoeffnen(task_id: int):
     with closing(get_db()) as db:
         row = db.execute(
-            "SELECT mitglied_nr, imap_uid, message_id FROM tasks WHERE id = ?", (task_id,)
+            "SELECT mitglied_nr, kandidat_absender_nr, imap_uid, message_id FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
         if row is None:
             abort(404)
         imap_uid = row["imap_uid"]
         message_id = row["message_id"]
-        new_status = "NEU" if row["mitglied_nr"] else "UNKLARE_ZUORDNUNG"
+        if row["mitglied_nr"]:
+            new_status = "NEU"
+        elif row["kandidat_absender_nr"]:
+            new_status = "ABWEICHENDE_ZUORDNUNG"
+        else:
+            new_status = "UNKLARE_ZUORDNUNG"
         db.execute(
             "UPDATE tasks SET status = ?, erledigt_am = NULL, imap_uid = NULL WHERE id = ?",
             (new_status, task_id),
