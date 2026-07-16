@@ -14,7 +14,7 @@ load_dotenv()
 
 from dataclasses import replace as _dc_replace
 
-from flask import Flask, Response, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, current_app, flash, jsonify, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
 from u_checker import check_examinations, send_notifications, send_summary
@@ -622,8 +622,8 @@ def task_pdf(task_id: int):
     )
 
 
-@app.route("/tasks/<int:task_id>/anhang/<int:index>")
-def task_anhang(task_id: int, index: int):
+def _lade_task_und_anhang_parts(task_id: int):
+    """Lädt einen Task samt geparsten Anhang-Teilen aus raw_email; bricht mit 404 ab, wenn Task oder raw_email fehlt."""
     with closing(get_db()) as db:
         row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is None or not row["raw_email"]:
@@ -632,7 +632,12 @@ def task_anhang(task_id: int, index: int):
     import email as email_lib
     from web.extractor import _iter_dokument_parts
     msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
-    parts = list(_iter_dokument_parts(msg))
+    return row, list(_iter_dokument_parts(msg))
+
+
+@app.route("/tasks/<int:task_id>/anhang/<int:index>")
+def task_anhang(task_id: int, index: int):
+    row, parts = _lade_task_und_anhang_parts(task_id)
     if index >= len(parts):
         abort(404)
 
@@ -648,15 +653,7 @@ def task_anhang(task_id: int, index: int):
 
 @app.route("/tasks/<int:task_id>/anhang/<int:index>/download")
 def task_anhang_download(task_id: int, index: int):
-    with closing(get_db()) as db:
-        row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if row is None or not row["raw_email"]:
-        abort(404)
-
-    import email as email_lib
-    from web.extractor import _iter_dokument_parts
-    msg = email_lib.message_from_bytes(bytes(row["raw_email"]))
-    parts = list(_iter_dokument_parts(msg))
+    row, parts = _lade_task_und_anhang_parts(task_id)
     if index >= len(parts):
         abort(404)
 
@@ -665,6 +662,15 @@ def task_anhang_download(task_id: int, index: int):
     filename = _task_dateiname(row, suffix=f"Anhang-{index + 1}", ext=ext)
     filename_echt = _task_dateiname_echt(row, suffix=f"Anhang-{index + 1}", ext=ext)
     return Response(payload, mimetype=ct, headers={"Content-Disposition": _content_disposition("attachment", filename, filename_echt)})
+
+
+@app.route("/tasks/<int:task_id>/anhaenge")
+def task_anhaenge(task_id: int):
+    _row, parts = _lade_task_und_anhang_parts(task_id)
+    return jsonify([
+        {"index": i, "filename": filename, "content_type": ct}
+        for i, (ct, filename, _payload) in enumerate(parts)
+    ])
 
 
 _VALID_SORTS = {"gesendet_am", "bestaetigt_am"}

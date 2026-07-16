@@ -549,6 +549,53 @@ def test_nachweise_pdf_anhang_reanalyse_buttons(client, tmp_path):
     assert f"/tasks/{task_id}/reanalyse" in body
 
 
+def test_tasks_anhaenge_liefert_json_metadaten(client, tmp_path):
+    """GET /tasks/<id>/anhaenge liefert Index, Dateiname und Content-Type für Bild- und PDF-Anhang."""
+    import email.mime.multipart
+    import email.mime.image
+    import email.mime.application
+
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+
+    msg = email.mime.multipart.MIMEMultipart()
+    msg["From"] = "test@example.com"
+    msg["Subject"] = "Test"
+    bild = email.mime.image.MIMEImage(b"fakeimgdata", _subtype="jpeg")
+    bild.add_header("Content-Disposition", "attachment", filename="foto.jpg")
+    msg.attach(bild)
+    pdf = email.mime.application.MIMEApplication(b"%PDF-1.4 fake", _subtype="pdf")
+    pdf.add_header("Content-Disposition", "attachment", filename="nachweis.pdf")
+    msg.attach(pdf)
+
+    task_id = _db_insert_task(db_path, status="NEU", raw_email=msg.as_bytes(), anhang_count=2)
+
+    response = client.get(f"/tasks/{task_id}/anhaenge")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data == [
+        {"index": 0, "filename": "foto.jpg", "content_type": "image/jpeg"},
+        {"index": 1, "filename": "nachweis.pdf", "content_type": "application/pdf"},
+    ]
+
+
+def test_tasks_anhaenge_404_bei_fehlendem_task(client, tmp_path):
+    """GET /tasks/<id>/anhaenge liefert 404 bei nicht existierendem Task."""
+    client.get("/")
+    response = client.get("/tasks/999999/anhaenge")
+    assert response.status_code == 404
+
+
+def test_tasks_anhaenge_404_ohne_raw_email(client, tmp_path):
+    """GET /tasks/<id>/anhaenge liefert 404, wenn kein raw_email vorhanden ist."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", raw_email=None)
+
+    response = client.get(f"/tasks/{task_id}/anhaenge")
+    assert response.status_code == 404
+
+
 def test_reanalyse_erzeugt_abweichende_zuordnung(client, tmp_path):
     """Re-Analyse erzeugt denselben ABWEICHENDE_ZUORDNUNG-Status wie der reguläre IMAP-Eingang (Issue #38)."""
     import sqlite3

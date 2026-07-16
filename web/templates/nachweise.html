@@ -214,21 +214,146 @@
       <button onclick="schliesseModal()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:#555;padding:0 0.4rem;">&times;</button>
     </div>
     <iframe id="anhang-frame" src="" style="flex:1;border:none;width:100%;"></iframe>
+    <div id="anhang-bild-container" style="display:none;flex:1;overflow:auto;position:relative;">
+      <img id="anhang-bild" src="" draggable="false" style="width:100%;height:auto;transform-origin:0 0;cursor:grab;">
+    </div>
   </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 <script>
-  function zeigeAnhang(url) {
-    document.getElementById('anhang-frame').src = url;
+  const BILD_ZOOM_MIN = 1;
+  const BILD_ZOOM_MAX = 4;
+  const BILD_ZOOM_SCHRITT = 0.12;
+
+  let bildZoom = BILD_ZOOM_MIN;
+  let bildPanX = 0;
+  let bildPanY = 0;
+  let bildDragActive = false;
+  let bildDragStartX = 0;
+  let bildDragStartY = 0;
+  let anhangAnfrageId = 0;
+
+  function bildTransformAnwenden() {
+    const img = document.getElementById('anhang-bild');
+    img.style.transform = `scale(${bildZoom}) translate(${bildPanX}px, ${bildPanY}px)`;
+  }
+
+  function bildZoomPanZuruecksetzen() {
+    bildZoom = BILD_ZOOM_MIN;
+    bildPanX = 0;
+    bildPanY = 0;
+    bildDragActive = false;
+    bildTransformAnwenden();
+  }
+
+  function bildWheel(e) {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const richtung = e.deltaY < 0 ? 1 : -1;
+    bildZoom = Math.min(BILD_ZOOM_MAX, Math.max(BILD_ZOOM_MIN, bildZoom + richtung * BILD_ZOOM_SCHRITT));
+    bildTransformAnwenden();
+  }
+
+  function bildDragStart(e) {
+    bildDragActive = true;
+    bildDragStartX = e.clientX;
+    bildDragStartY = e.clientY;
+    e.target.style.cursor = 'grabbing';
+  }
+
+  function bildPanBegrenzen() {
+    const container = document.getElementById('anhang-bild-container');
+    const img = document.getElementById('anhang-bild');
+    // Grenze so wählen, dass mindestens ein Teil des Bildes stets sichtbar bleibt.
+    const grenzeX = container.clientWidth / bildZoom;
+    const grenzeY = img.clientHeight / bildZoom;
+    bildPanX = Math.min(grenzeX, Math.max(-grenzeX, bildPanX));
+    bildPanY = Math.min(grenzeY, Math.max(-grenzeY, bildPanY));
+  }
+
+  function bildDragMove(e) {
+    if (!bildDragActive) return;
+    const dx = (e.clientX - bildDragStartX) / bildZoom;
+    const dy = (e.clientY - bildDragStartY) / bildZoom;
+    bildPanX += dx;
+    bildPanY += dy;
+    bildPanBegrenzen();
+    bildDragStartX = e.clientX;
+    bildDragStartY = e.clientY;
+    bildTransformAnwenden();
+  }
+
+  function bildDragEnde() {
+    bildDragActive = false;
+    document.getElementById('anhang-bild').style.cursor = 'grab';
+  }
+
+  function anhangAlsIframeZeigen(url) {
+    document.getElementById('anhang-bild-container').style.display = 'none';
+    document.getElementById('anhang-bild').src = '';
+    const frame = document.getElementById('anhang-frame');
+    frame.style.display = '';
+    frame.src = url;
+  }
+
+  function anhangAlsBildZeigen(url) {
+    const frame = document.getElementById('anhang-frame');
+    frame.style.display = 'none';
+    frame.src = '';
+    bildZoomPanZuruecksetzen();
+    document.getElementById('anhang-bild-container').style.display = '';
+    document.getElementById('anhang-bild').src = url;
+  }
+
+  async function zeigeAnhang(url) {
+    const anfrageId = ++anhangAnfrageId;
     const m = document.getElementById('anhang-modal');
     m.style.display = 'flex';
+
+    const match = url.match(/^\/tasks\/(\d+)\/anhang\/(\d+)$/);
+    if (!match) {
+      anhangAlsIframeZeigen(url);
+      return;
+    }
+    const [, taskId, index] = match;
+
+    try {
+      const resp = await fetch(`/tasks/${taskId}/anhaenge`);
+      if (!resp.ok) throw new Error('Metadaten nicht abrufbar');
+      const anhaenge = await resp.json();
+      if (anfrageId !== anhangAnfrageId) return;
+      const meta = anhaenge.find(a => String(a.index) === index);
+      if (meta && meta.content_type && meta.content_type.startsWith('image/')) {
+        anhangAlsBildZeigen(url);
+      } else {
+        anhangAlsIframeZeigen(url);
+      }
+    } catch (err) {
+      if (anfrageId !== anhangAnfrageId) return;
+      anhangAlsIframeZeigen(url);
+    }
   }
+
   function schliesseModal() {
+    anhangAnfrageId++;
     document.getElementById('anhang-modal').style.display = 'none';
     document.getElementById('anhang-frame').src = '';
+    document.getElementById('anhang-bild-container').style.display = 'none';
+    document.getElementById('anhang-bild').src = '';
+    bildZoomPanZuruecksetzen();
   }
+
   document.addEventListener('keydown', e => { if (e.key === 'Escape') schliesseModal(); });
+  document.addEventListener('DOMContentLoaded', () => {
+    const container = document.getElementById('anhang-bild-container');
+    const img = document.getElementById('anhang-bild');
+    container.addEventListener('wheel', bildWheel, { passive: false });
+    img.addEventListener('mousedown', bildDragStart);
+    document.addEventListener('mousemove', bildDragMove);
+    document.addEventListener('mouseup', bildDragEnde);
+    window.addEventListener('blur', bildDragEnde);
+  });
 </script>
 {% endblock %}
