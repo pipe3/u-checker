@@ -1,11 +1,14 @@
 """Tests für Archiv-Ansicht, PDF-Export und automatische Löschung."""
 import email
 import io
+import re
 import sqlite3
 from datetime import datetime, timedelta
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from unittest.mock import patch
+from urllib.parse import unquote
 
 import pytest
 
@@ -23,19 +26,23 @@ def client(tmp_path):
         yield c
 
 
-def _insert_task(tmp_path, status="ERLEDIGT", raw_email=None, erledigt_am=None, imap_uid=None, message_id=None):
+def _insert_task(tmp_path, status="ERLEDIGT", raw_email=None, erledigt_am=None, imap_uid=None, message_id=None,
+                  mitglied_name=None, pruefungstyp="G25", empfangen_am="2024-01-01T10:00:00"):
     db = sqlite3.connect(tmp_path / "checker.db")
     db.row_factory = sqlite3.Row
     db.execute("""
-        INSERT INTO tasks (status, empfangen_am, von_email, betreff, raw_email, erledigt_am, imap_uid, message_id)
-        VALUES (?, ?, 'sender@example.com', 'Testnachweis G25', ?, ?, ?, ?)
+        INSERT INTO tasks (status, empfangen_am, von_email, betreff, raw_email, erledigt_am, imap_uid, message_id,
+                            mitglied_name, pruefungstyp)
+        VALUES (?, ?, 'sender@example.com', 'Testnachweis G25', ?, ?, ?, ?, ?, ?)
     """, (
         status,
-        datetime.now().isoformat(timespec="seconds"),
+        empfangen_am,
         raw_email,
         erledigt_am,
         imap_uid,
         message_id,
+        mitglied_name,
+        pruefungstyp,
     ))
     db.commit()
     task_id = db.execute("SELECT id FROM tasks ORDER BY id DESC LIMIT 1").fetchone()["id"]
@@ -50,6 +57,19 @@ def _build_simple_raw_email(subject="Testnachweis", body="G25 gültig bis 31.12.
     msg["Subject"] = subject
     msg["Date"] = "Mon, 01 Jan 2024 10:00:00 +0000"
     msg.attach(MIMEText(body, "plain", "utf-8"))
+    return msg.as_bytes()
+
+
+def _build_raw_email_with_attachment(filename="Anhang.pdf", content=b"%PDF-1.4 fake"):
+    msg = MIMEMultipart()
+    msg["From"] = "Max Mustermann <max@example.com>"
+    msg["To"] = "nachweise@feuerwehr.de"
+    msg["Subject"] = "Testnachweis"
+    msg["Date"] = "Mon, 01 Jan 2024 10:00:00 +0000"
+    msg.attach(MIMEText("G25 gültig bis 31.12.2026", "plain", "utf-8"))
+    part = MIMEApplication(content, _subtype="pdf")
+    part.add_header("Content-Disposition", "attachment", filename=filename)
+    msg.attach(part)
     return msg.as_bytes()
 
 
@@ -128,6 +148,84 @@ def test_pdf_download_enthaelt_dateinamen(client, tmp_path):
     cd = response.headers.get("Content-Disposition", "")
     assert "attachment" in cd
     assert ".pdf" in cd
+
+
+def test_pdf_download_transliteriert_umlaute_im_ascii_fallback(client, tmp_path):
+    raw = _build_simple_raw_email()
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw, mitglied_name="Björn Müstermann")
+
+    response = client.get(f"/tasks/{task_id}/pdf")
+    cd = response.headers.get("Content-Disposition", "")
+    fallback = re.search(r'filename="([^"]+)"', cd).group(1)
+    assert "Mstermann" not in fallback
+    assert "Bjoern" in fallback or "Björn" not in fallback
+    assert "Muestermann" in fallback
+
+
+def test_pdf_download_enthaelt_utf8_dateinamen_mit_umlaut(client, tmp_path):
+    raw = _build_simple_raw_email()
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw, mitglied_name="Björn Müstermann")
+
+    response = client.get(f"/tasks/{task_id}/pdf")
+    cd = response.headers.get("Content-Disposition", "")
+    assert "filename*=UTF-8''" in cd
+    utf8_part = re.search(r"filename\*=UTF-8''([^;]+)", cd).group(1)
+    assert unquote(utf8_part) == "2024-01-01_Björn-Müstermann_G25.pdf" or "M%C3%BCstermann" in utf8_part
+
+
+def test_pdf_download_transliteriert_scharfes_s(client, tmp_path):
+    raw = _build_simple_raw_email()
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw, mitglied_name="Groß Weiss")
+
+    response = client.get(f"/tasks/{task_id}/pdf")
+    cd = response.headers.get("Content-Disposition", "")
+    fallback = re.search(r'filename="([^"]+)"', cd).group(1)
+    assert "Gross" in fallback
+
+
+def test_anhang_inline_enthaelt_utf8_dateinamen_mit_umlaut(client, tmp_path):
+    raw = _build_raw_email_with_attachment(filename="Attest_Müstermann.pdf")
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw)
+
+    response = client.get(f"/tasks/{task_id}/anhang/0")
+    assert response.status_code == 200
+    cd = response.headers.get("Content-Disposition", "")
+    assert "inline" in cd
+    assert "filename*=UTF-8''" in cd
+
+
+def test_anhang_inline_ascii_fallback_behaelt_dateiendung_bei_nicht_ascii_namen(client, tmp_path):
+    raw = _build_raw_email_with_attachment(filename="文件.pdf")
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw)
+
+    response = client.get(f"/tasks/{task_id}/anhang/0")
+    assert response.status_code == 200
+    cd = response.headers.get("Content-Disposition", "")
+    fallback = re.search(r'filename="([^"]+)"', cd).group(1)
+    assert fallback.endswith(".pdf")
+
+
+def test_anhang_download_enthaelt_utf8_dateinamen_mit_umlaut(client, tmp_path):
+    raw = _build_simple_raw_email()
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=_build_raw_email_with_attachment(filename="x.pdf"), mitglied_name="Björn Müstermann")
+
+    response = client.get(f"/tasks/{task_id}/anhang/0/download")
+    assert response.status_code == 200
+    cd = response.headers.get("Content-Disposition", "")
+    assert "attachment" in cd
+    assert "filename*=UTF-8''" in cd
+    fallback = re.search(r'filename="([^"]+)"', cd).group(1)
+    assert "Muestermann" in fallback
+
+
+def test_anhang_download_mit_anfuehrungszeichen_im_dateinamen_bleibt_gueltig(client, tmp_path):
+    raw = _build_raw_email_with_attachment(filename='Attest "wichtig".pdf')
+    task_id = _insert_task(tmp_path, status="ERLEDIGT", raw_email=raw)
+
+    response = client.get(f"/tasks/{task_id}/anhang/0")
+    assert response.status_code == 200
+    cd = response.headers.get("Content-Disposition", "")
+    assert '""' not in cd.split("filename*=")[0]
 
 
 # ── Auto-Löschung ───────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -557,16 +558,47 @@ def task_erledigt(task_id: int):
     return redirect(_nachweise_url())
 
 
-def _task_dateiname(row, suffix: str = "", ext: str = "pdf") -> str:
-    """Baut einen Dateinamen aus Empfangsdatum, Mitglied und Prüfungstyp."""
+_UMLAUT_TRANSLITERATION = {
+    "ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue", "ß": "ss",
+}
+
+
+def _transliteriere_umlaute(text: str) -> str:
+    """Ersetzt deutsche Umlaute/ß durch ihre ASCII-Umschreibung (ö→oe, ß→ss, ...)."""
+    for umlaut, ersatz in _UMLAUT_TRANSLITERATION.items():
+        text = text.replace(umlaut, ersatz)
+    return text
+
+
+def _task_dateiname_echt(row, suffix: str = "", ext: str = "pdf") -> str:
+    """Wie _task_dateiname(), aber ohne Umlaut-Transliteration/ASCII-Reduktion – für filename*=UTF-8''."""
     datum = (row["empfangen_am"] or "")[:10]
     mitglied = re.sub(r"\s+", "-", (row["mitglied_name"] or "unbekannt").strip())
     typ = row["pruefungstyp"] or "Nachweis"
     basis = f"{datum}_{mitglied}_{typ}"
     if suffix:
         basis += f"_{suffix}"
-    clean = re.sub(r"[^\w\-]", "_", basis.encode("ascii", "ignore").decode())
-    return f"{clean}.{ext}"
+    return f"{basis}.{ext}"
+
+
+def _task_dateiname(row, suffix: str = "", ext: str = "pdf") -> str:
+    """Baut einen Dateinamen aus Empfangsdatum, Mitglied und Prüfungstyp (ASCII, Umlaute transliteriert)."""
+    echt = _task_dateiname_echt(row, suffix=suffix, ext=ext)
+    clean = re.sub(r"[^\w.\-]", "_", _transliteriere_umlaute(echt).encode("ascii", "ignore").decode())
+    return clean or f"unbekannt.{ext}"
+
+
+def _content_disposition(disposition: str, ascii_fallback: str, echter_name: Optional[str] = None) -> str:
+    """Baut einen Content-Disposition-Header mit ASCII-Fallback und RFC-5987-UTF-8-Namen.
+
+    `ascii_fallback` wird als filename="..." für ältere Clients gesetzt, `echter_name`
+    (falls abweichend, z.B. mit Umlauten) zusätzlich als filename*=UTF-8''... für moderne Clients.
+    """
+    safe_fallback = ascii_fallback.replace("\\", "").replace('"', "")
+    header = f'{disposition}; filename="{safe_fallback}"'
+    if echter_name and echter_name != ascii_fallback:
+        header += f"; filename*=UTF-8''{quote(echter_name, safe='')}"
+    return header
 
 
 @app.route("/tasks/<int:task_id>/pdf")
@@ -581,11 +613,12 @@ def task_pdf(task_id: int):
     from web.pdf_export import email_to_pdf
     pdf_bytes = email_to_pdf(bytes(row["raw_email"]))
     filename = _task_dateiname(row)
+    filename_echt = _task_dateiname_echt(row)
 
     return Response(
         pdf_bytes,
         mimetype="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": _content_disposition("attachment", filename, filename_echt)},
     )
 
 
@@ -605,7 +638,11 @@ def task_anhang(task_id: int, index: int):
 
     ct, orig_filename, payload = parts[index]
     ext = orig_filename.rsplit(".", 1)[-1].lower() if "." in orig_filename else ("pdf" if ct == "application/pdf" else "jpg")
-    disposition = f'inline; filename="{orig_filename}"' if orig_filename else "inline"
+    if orig_filename:
+        ascii_fallback = re.sub(r"[^\w.\-]", "_", orig_filename.encode("ascii", "ignore").decode())
+        disposition = _content_disposition("inline", ascii_fallback or f"Anhang.{ext}", orig_filename)
+    else:
+        disposition = "inline"
     return Response(payload, mimetype=ct, headers={"Content-Disposition": disposition})
 
 
@@ -626,7 +663,8 @@ def task_anhang_download(task_id: int, index: int):
     ct, orig_filename, payload = parts[index]
     ext = orig_filename.rsplit(".", 1)[-1].lower() if "." in orig_filename else ("pdf" if ct == "application/pdf" else "jpg")
     filename = _task_dateiname(row, suffix=f"Anhang-{index + 1}", ext=ext)
-    return Response(payload, mimetype=ct, headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+    filename_echt = _task_dateiname_echt(row, suffix=f"Anhang-{index + 1}", ext=ext)
+    return Response(payload, mimetype=ct, headers={"Content-Disposition": _content_disposition("attachment", filename, filename_echt)})
 
 
 _VALID_SORTS = {"gesendet_am", "bestaetigt_am"}
