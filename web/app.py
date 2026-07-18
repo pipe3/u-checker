@@ -23,8 +23,9 @@ from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_BETREFF as _DEFAULT_ZUSAMME
 from u_checker.mailer import DEFAULT_ZUSAMMENFASSUNG_TEMPLATE as _DEFAULT_ZUSAMMENFASSUNG_TEMPLATE
 from u_checker.mailer import DEFAULT_VERIFIKATIONS_BETREFF as _DEFAULT_VERIFIKATIONS_BETREFF
 from u_checker.mailer import DEFAULT_VERIFIKATIONS_TEMPLATE as _DEFAULT_VERIFIKATIONS_TEMPLATE
-from u_checker.mailer import send_simple_mail, send_verifikationsmail
+from u_checker.mailer import send_simple_mail, send_task_antwort, send_verifikationsmail
 from web.extractor import load_members_from_xls
+from web.imap_poller import imap_move_to_nachweis
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,30 @@ def init_db():
                 status TEXT NOT NULL,
                 faelligkeitsdatum TEXT
             )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS task_nachrichten (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                richtung TEXT NOT NULL,
+                zeitstempel TEXT NOT NULL,
+                von_email TEXT,
+                an_email TEXT,
+                betreff TEXT,
+                text TEXT,
+                raw_email BLOB,
+                message_id TEXT,
+                in_reply_to TEXT,
+                imap_uid TEXT
+            )
+        """)
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_task_nachrichten_task_id
+            ON task_nachrichten (task_id)
+        """)
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_task_nachrichten_message_id
+            ON task_nachrichten (message_id)
         """)
         _migrate_tasks(db)
         _migrate_email_verifikation(db)
@@ -539,23 +564,120 @@ def task_erledigt(task_id: int):
         if row is None:
             abort(404)
         imap_uid = row["imap_uid"]
+        thread_uids = [
+            r["imap_uid"] for r in db.execute(
+                """SELECT imap_uid FROM task_nachrichten
+                   WHERE task_id = ? AND richtung = 'eingehend' AND imap_uid IS NOT NULL""",
+                (task_id,),
+            ).fetchall()
+        ]
         db.execute(
             "UPDATE tasks SET status = 'ERLEDIGT', erledigt_am = COALESCE(erledigt_am, ?) WHERE id = ?",
             (now, task_id),
         )
         db.commit()
 
-    if imap_uid:
-        try:
-            cfg = get_settings()
-            nachweis_ordner = cfg.get("imap_nachweis_ordner", "Nachweise").strip()
-            from web.imap_poller import imap_move_to_nachweis
-            imap_move_to_nachweis(cfg, imap_uid, nachweis_ordner)
-        except Exception:
-            logger.exception("IMAP-Move für Task %d fehlgeschlagen", task_id)
+    alle_uids = ([imap_uid] if imap_uid else []) + thread_uids
+    if alle_uids:
+        cfg = get_settings()
+        nachweis_ordner = cfg.get("imap_nachweis_ordner", "Nachweise").strip()
+        for uid in alle_uids:
+            try:
+                imap_move_to_nachweis(cfg, uid, nachweis_ordner)
+            except Exception:
+                logger.exception("IMAP-Move für Task %d (UID %s) fehlgeschlagen", task_id, uid)
 
     flash("Aufgabe als erledigt markiert.", "success")
     return redirect(_nachweise_url())
+
+
+_ANTWORT_BETREFF_RE = re.compile(r"^re:\s*", re.IGNORECASE)
+
+
+def _re_betreff(betreff: Optional[str]) -> str:
+    """Baut den Re:-Betreff für eine Antwort, ohne ein bereits vorhandenes 'Re:' zu verdoppeln."""
+    basis = (betreff or "").strip()
+    if _ANTWORT_BETREFF_RE.match(basis):
+        return basis
+    return f"Re: {basis}" if basis else "Re:"
+
+
+@app.route("/tasks/<int:task_id>/antworten", methods=["POST"])
+def task_antworten(task_id: int):
+    an_email = request.form.get("an_email", "").strip()
+    text = request.form.get("text", "").strip()
+
+    with closing(get_db()) as db:
+        row = db.execute("SELECT betreff, message_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404)
+
+        if not an_email or not _email_format_gueltig(an_email):
+            flash("Bitte eine gültige Empfänger-Adresse angeben.", "error")
+            return redirect(_nachweise_url())
+        if not text:
+            flash("Bitte einen Antworttext eingeben.", "error")
+            return redirect(_nachweise_url())
+
+        betreff = _re_betreff(row["betreff"])
+        original_message_id = row["message_id"]
+        in_reply_to = original_message_id if original_message_id and not original_message_id.startswith("hash:") else None
+
+        cfg = get_settings()
+        smtp_config = _build_smtp_config(cfg)
+        try:
+            neue_message_id = send_task_antwort(
+                smtp_config=smtp_config,
+                to_addr=an_email,
+                betreff=betreff,
+                text=text,
+                in_reply_to=in_reply_to,
+            )
+        except Exception as e:
+            logger.exception("Antwort auf Task %d fehlgeschlagen", task_id)
+            flash(f"Fehler beim Senden der Antwort: {e}", "error")
+            return redirect(_nachweise_url())
+
+        now = datetime.now().isoformat(timespec="seconds")
+        db.execute(
+            """INSERT INTO task_nachrichten
+                   (task_id, richtung, zeitstempel, an_email, betreff, text, message_id)
+               VALUES (?, 'ausgehend', ?, ?, ?, ?, ?)""",
+            (task_id, now, an_email, betreff, text, neue_message_id),
+        )
+        db.commit()
+
+    flash("Antwort gesendet.", "success")
+    return redirect(_nachweise_url())
+
+
+@app.route("/tasks/<int:task_id>/thread")
+def task_thread(task_id: int):
+    with closing(get_db()) as db:
+        row = db.execute("SELECT von_email, betreff FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            abort(404)
+        nachrichten = db.execute(
+            """SELECT richtung, zeitstempel, von_email, an_email, betreff, text
+               FROM task_nachrichten WHERE task_id = ? ORDER BY zeitstempel ASC, id ASC""",
+            (task_id,),
+        ).fetchall()
+
+    return jsonify({
+        "empfaenger_vorschlag": row["von_email"] or "",
+        "betreff": _re_betreff(row["betreff"]),
+        "nachrichten": [
+            {
+                "richtung": n["richtung"],
+                "zeitstempel": n["zeitstempel"],
+                "von_email": n["von_email"],
+                "an_email": n["an_email"],
+                "betreff": n["betreff"],
+                "text": n["text"],
+            }
+            for n in nachrichten
+        ],
+    })
 
 
 _UMLAUT_TRANSLITERATION = {

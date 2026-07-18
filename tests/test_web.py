@@ -255,6 +255,7 @@ def _db_insert_task(db_path, **kwargs):
         "empfangen_am": _dt.now().isoformat(timespec="seconds"),
         "von_email": "sender@example.com",
         "betreff": "Test-Nachweis",
+        "message_id": None,
         "pruefungstyp": None,
         "faelligkeitsdatum": None,
         "mitglied_name": None,
@@ -271,12 +272,12 @@ def _db_insert_task(db_path, **kwargs):
     db = _sqlite3.connect(db_path)
     cursor = db.execute(
         """INSERT INTO tasks
-           (status, empfangen_am, von_email, betreff,
+           (status, empfangen_am, von_email, betreff, message_id,
             pruefungstyp, faelligkeitsdatum, mitglied_name, mitglied_nr,
             raw_email, raw_text, anhang_count,
             kandidat_absender_nr, kandidat_absender_name,
             kandidat_dokument_nr, kandidat_dokument_name)
-           VALUES (:status, :empfangen_am, :von_email, :betreff,
+           VALUES (:status, :empfangen_am, :von_email, :betreff, :message_id,
                    :pruefungstyp, :faelligkeitsdatum, :mitglied_name, :mitglied_nr,
                    :raw_email, :raw_text, :anhang_count,
                    :kandidat_absender_nr, :kandidat_absender_name,
@@ -780,4 +781,251 @@ def test_manuell_bestaetigen_setzt_adresse_geaendert_zurueck(client, tmp_path):
     db.close()
     assert row["status"] == "bestaetigt"
     assert row["adresse_geaendert"] == 0
+
+
+# --- Task-Antworten / Thread-Verlauf: Issue #41 ---
+
+def _db_insert_task_nachricht(db_path, **kwargs):
+    defaults = {
+        "task_id": None,
+        "richtung": "eingehend",
+        "zeitstempel": _dt.now().isoformat(timespec="seconds"),
+        "von_email": "max@example.com",
+        "an_email": None,
+        "betreff": "G25 Nachweis",
+        "text": None,
+        "raw_email": None,
+        "message_id": None,
+        "in_reply_to": None,
+        "imap_uid": None,
+    }
+    defaults.update(kwargs)
+    db = _sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO task_nachrichten
+           (task_id, richtung, zeitstempel, von_email, an_email, betreff, text,
+            raw_email, message_id, in_reply_to, imap_uid)
+           VALUES (:task_id, :richtung, :zeitstempel, :von_email, :an_email, :betreff, :text,
+                   :raw_email, :message_id, :in_reply_to, :imap_uid)""",
+        defaults,
+    )
+    db.commit()
+    db.close()
+
+
+def test_antworten_sendet_und_speichert_ausgehende_nachricht(client, tmp_path):
+    """POST /tasks/<id>/antworten versendet und speichert eine ausgehende Task-Nachricht mit Re:-Betreff."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path, status="NEU", von_email="max@example.com", betreff="G25 Nachweis",
+        message_id="<original-1@example.com>",
+    )
+
+    with patch("web.app.send_task_antwort", return_value="<neue-antwort@example.com>") as mock_send:
+        response = client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "max@example.com", "text": "Bitte Nachweis nachreichen."},
+            follow_redirects=True,
+        )
+    assert response.status_code == 200
+    mock_send.assert_called_once()
+    _, kwargs = mock_send.call_args
+    assert kwargs["to_addr"] == "max@example.com"
+    assert kwargs["betreff"] == "Re: G25 Nachweis"
+    assert kwargs["text"] == "Bitte Nachweis nachreichen."
+
+    db = _sqlite3.connect(db_path)
+    db.row_factory = _sqlite3.Row
+    row = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'ausgehend'", (task_id,)
+    ).fetchone()
+    task_row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row is not None
+    assert row["an_email"] == "max@example.com"
+    assert row["betreff"] == "Re: G25 Nachweis"
+    assert row["text"] == "Bitte Nachweis nachreichen."
+    assert row["message_id"] == "<neue-antwort@example.com>"
+    assert task_row["status"] == "NEU"  # Status bleibt unverändert
+
+
+def test_antworten_smtp_fehler_hinterlaesst_keine_nachricht(client, tmp_path):
+    """Schlägt der SMTP-Versand fehl, wird keine Task-Nachricht gespeichert und ein Fehler gemeldet."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", von_email="max@example.com", betreff="G25 Nachweis")
+
+    with patch("web.app.send_task_antwort", side_effect=Exception("SMTP down")):
+        response = client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "max@example.com", "text": "Bitte Nachweis nachreichen."},
+            follow_redirects=True,
+        )
+    assert response.status_code == 200
+
+    db = _sqlite3.connect(db_path)
+    count = db.execute("SELECT COUNT(*) FROM task_nachrichten").fetchone()[0]
+    db.close()
+    assert count == 0
+
+
+def test_antworten_ohne_empfaenger_zeigt_fehler(client, tmp_path):
+    """Leerer Empfänger wird abgelehnt, ohne SMTP-Versand auszulösen."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", betreff="G25 Nachweis")
+
+    with patch("web.app.send_task_antwort") as mock_send:
+        response = client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "", "text": "Text"},
+            follow_redirects=True,
+        )
+    assert response.status_code == 200
+    mock_send.assert_not_called()
+
+
+def test_antworten_ungueltige_email_zeigt_fehler(client, tmp_path):
+    """Ein Empfänger ohne gültiges E-Mail-Format wird abgelehnt."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", betreff="G25 Nachweis")
+
+    with patch("web.app.send_task_antwort") as mock_send:
+        response = client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "keine-email", "text": "Text"},
+            follow_redirects=True,
+        )
+    assert response.status_code == 200
+    mock_send.assert_not_called()
+
+
+def test_antworten_ohne_text_zeigt_fehler(client, tmp_path):
+    """Leerer Antworttext wird abgelehnt."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", von_email="max@example.com", betreff="G25 Nachweis")
+
+    with patch("web.app.send_task_antwort") as mock_send:
+        response = client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "max@example.com", "text": "  "},
+            follow_redirects=True,
+        )
+    assert response.status_code == 200
+    mock_send.assert_not_called()
+
+
+def test_antworten_unbekannte_id_gibt_404(client):
+    response = client.post(
+        "/tasks/9999/antworten", data={"an_email": "x@example.com", "text": "Text"}
+    )
+    assert response.status_code == 404
+
+
+def test_antworten_verwendet_in_reply_to_wenn_letzte_nachricht_eingehend(client, tmp_path):
+    """Betreff-Ableitung nutzt den Task-Betreff; In-Reply-To wird an send_task_antwort weitergereicht."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path, status="NEU", von_email="max@example.com", betreff="Re: G25 Nachweis",
+        message_id="<original-1@example.com>",
+    )
+
+    with patch("web.app.send_task_antwort", return_value="<neue-antwort@example.com>") as mock_send:
+        client.post(
+            f"/tasks/{task_id}/antworten",
+            data={"an_email": "max@example.com", "text": "Text"},
+            follow_redirects=True,
+        )
+
+    _, kwargs = mock_send.call_args
+    assert kwargs["betreff"] == "Re: G25 Nachweis"  # kein doppeltes "Re: Re:"
+    assert kwargs["in_reply_to"] == "<original-1@example.com>"
+
+
+def test_thread_route_liefert_empfaenger_betreff_und_verlauf(client, tmp_path):
+    """GET /tasks/<id>/thread liefert Empfänger-Vorschlag, Re:-Betreff und chronologischen Verlauf."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path, status="NEU", von_email="max@example.com", betreff="G25 Nachweis",
+    )
+    _db_insert_task_nachricht(
+        db_path, task_id=task_id, richtung="eingehend",
+        zeitstempel="2026-01-01T10:00:00", von_email="max@example.com",
+        betreff="G25 Nachweis", text=None,
+    )
+    _db_insert_task_nachricht(
+        db_path, task_id=task_id, richtung="ausgehend",
+        zeitstempel="2026-01-02T10:00:00", an_email="max@example.com",
+        betreff="Re: G25 Nachweis", text="Bitte nachreichen.",
+    )
+
+    response = client.get(f"/tasks/{task_id}/thread")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["empfaenger_vorschlag"] == "max@example.com"
+    assert data["betreff"] == "Re: G25 Nachweis"
+    assert len(data["nachrichten"]) == 2
+    assert data["nachrichten"][0]["richtung"] == "eingehend"
+    assert data["nachrichten"][1]["richtung"] == "ausgehend"
+    assert data["nachrichten"][1]["text"] == "Bitte nachreichen."
+
+
+def test_thread_route_404_bei_fehlendem_task(client):
+    response = client.get("/tasks/9999/thread")
+    assert response.status_code == 404
+
+
+def test_erledigt_verschiebt_alle_thread_uids(client, tmp_path):
+    """POST /tasks/<id>/erledigt verschiebt die ursprüngliche UID und alle eingehenden Thread-UIDs einzeln."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+    db = _sqlite3.connect(db_path)
+    db.execute("UPDATE tasks SET imap_uid = '10' WHERE id = ?", (task_id,))
+    db.commit()
+    db.close()
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="eingehend", imap_uid="20")
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="eingehend", imap_uid="21")
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="ausgehend", imap_uid=None)
+
+    with patch("web.app.imap_move_to_nachweis") as mock_move:
+        response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+    assert response.status_code == 200
+
+    verschobene_uids = {call.args[1] for call in mock_move.call_args_list}
+    assert verschobene_uids == {"10", "20", "21"}
+
+
+def test_erledigt_ein_fehlschlag_blockiert_andere_uids_nicht(client, tmp_path):
+    """Ein IMAP-Fehler bei einer Thread-UID hindert die übrigen nicht am Verschieben."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+    db = _sqlite3.connect(db_path)
+    db.execute("UPDATE tasks SET imap_uid = '10' WHERE id = ?", (task_id,))
+    db.commit()
+    db.close()
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="eingehend", imap_uid="20")
+
+    def _move_side_effect(cfg, uid, ordner):
+        if uid == "10":
+            raise Exception("IMAP kaputt")
+
+    with patch("web.app.imap_move_to_nachweis", side_effect=_move_side_effect) as mock_move:
+        response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
+    assert response.status_code == 200
+
+    verschobene_uids = {call.args[1] for call in mock_move.call_args_list}
+    assert verschobene_uids == {"10", "20"}
+
+    db = _sqlite3.connect(db_path)
+    db.row_factory = _sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "ERLEDIGT"
 

@@ -185,6 +185,51 @@ def send_verifikationsmail(
     return msg_id
 
 
+def send_task_antwort(
+    smtp_config: dict,
+    to_addr: str,
+    betreff: str,
+    text: str,
+    *,
+    in_reply_to: Optional[str] = None,
+) -> str:
+    """Sendet eine Antwort auf einen Task und gibt die neue Message-ID zurück.
+
+    Setzt In-Reply-To/References nur, wenn `in_reply_to` eine echte Message-ID ist
+    (kein interner hash:-Fallback ohne Message-ID der Ursprungsmail).
+    """
+    from_addr = smtp_config.get("from_addr") or SMTP_FROM
+
+    mime = MIMEMultipart()
+    msg_id = email.utils.make_msgid()
+    mime["Message-ID"] = msg_id
+    mime["From"] = from_addr
+    mime["To"] = to_addr
+    mime["Subject"] = betreff
+    if in_reply_to and not in_reply_to.startswith("hash:"):
+        mime["In-Reply-To"] = in_reply_to
+        mime["References"] = in_reply_to
+    mime.attach(MIMEText(text, "plain", "utf-8"))
+
+    host = smtp_config.get("host") or SMTP_HOST
+    port = int(smtp_config.get("port") or SMTP_PORT)
+    user = smtp_config.get("user") or SMTP_USER
+    password = smtp_config.get("password") or SMTP_PASSWORD
+
+    if port == 465:
+        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
+    else:
+        ctx = smtplib.SMTP(host, port, timeout=10)
+    with ctx as server:
+        if port != 465:
+            server.starttls()
+        if user and password:
+            server.login(user, password)
+        server.sendmail(from_addr, [to_addr], mime.as_string())
+
+    return msg_id
+
+
 def send_simple_mail(smtp_config: dict, to_addrs: list, subject: str, body: str) -> None:
     if not to_addrs:
         return

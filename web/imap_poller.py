@@ -299,8 +299,9 @@ def poll_inbox(app) -> int:
                     pass
             return 0
 
-        # Separate Verifikationsantworten von normalen Mails
+        # Separate Verifikationsantworten, Task-Thread-Folgenachrichten und normale Mails
         verif_replies: list[tuple[str, bytes]] = []   # (pers_nr, imap_msg_id)
+        task_replies: list[tuple[int, bytes, bytes, str | None]] = []  # (task_id, imap_msg_id, raw_bytes, imap_uid)
         normal_emails: list[tuple[bytes, bytes, str | None]] = []  # (imap_msg_id, raw_bytes, imap_uid)
 
         with closing(get_db()) as db:
@@ -315,7 +316,43 @@ def poll_inbox(app) -> int:
                     if row:
                         verif_replies.append((row["pers_nr"], imap_msg_id))
                         continue
+                    task_row = db.execute(
+                        """SELECT tn.task_id FROM task_nachrichten tn
+                           JOIN tasks t ON t.id = tn.task_id
+                           WHERE tn.message_id = ? AND tn.richtung = 'ausgehend' AND t.status != 'ERLEDIGT'""",
+                        (in_reply_to,),
+                    ).fetchone()
+                    if task_row:
+                        task_replies.append((task_row["task_id"], imap_msg_id, raw, uid))
+                        continue
                 normal_emails.append((imap_msg_id, raw, uid))
+
+        # Task-Thread-Folgenachrichten als eingehende task_nachrichten speichern (keine erneute
+        # Zuordnungslogik, kein neuer Task, Task bleibt in INBOX bis "Erledigt").
+        if task_replies:
+            with closing(get_db()) as db:
+                for task_id, _imap_msg_id, raw, uid in task_replies:
+                    msg = email.message_from_bytes(raw)
+                    from_raw = msg.get("From", "")
+                    von_name, von_email = email.utils.parseaddr(from_raw)
+                    betreff = _decode_header_value(msg.get("Subject", ""))
+                    message_id = (msg.get("Message-ID") or "").strip() or None
+                    in_reply_to = (msg.get("In-Reply-To") or "").strip() or None
+                    zeitstempel = datetime.now().isoformat(timespec="seconds")
+                    db.execute(
+                        """INSERT INTO task_nachrichten
+                               (task_id, richtung, zeitstempel, von_email, betreff, raw_email,
+                                message_id, in_reply_to, imap_uid)
+                           VALUES (?, 'eingehend', ?, ?, ?, ?, ?, ?, ?)""",
+                        (task_id, zeitstempel, von_email or None, betreff or None, raw,
+                         message_id, in_reply_to, uid),
+                    )
+                db.commit()
+            for _task_id, imap_msg_id, _raw, _uid in task_replies:
+                try:
+                    imap.store(imap_msg_id, "+FLAGS", "\\Seen")
+                except Exception:
+                    logger.warning("IMAP Seen-Markierung fehlgeschlagen für Task-Folgenachricht")
 
         # Verifikationsantworten verarbeiten: Status setzen + in Ordner verschieben
         if verif_replies:

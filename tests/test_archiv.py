@@ -427,7 +427,7 @@ def test_task_erledigt_ruft_imap_move_auf(client, tmp_path):
     """Wenn imap_uid gesetzt ist, wird imap_move_to_nachweis aufgerufen."""
     task_id = _insert_task(tmp_path, status="NEU", imap_uid="42")
 
-    with patch("web.imap_poller.imap_move_to_nachweis") as mock_move:
+    with patch("web.app.imap_move_to_nachweis") as mock_move:
         client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
 
     mock_move.assert_called_once()
@@ -439,7 +439,7 @@ def test_task_erledigt_ohne_uid_ueberspringt_imap(client, tmp_path):
     """Ohne imap_uid wird kein IMAP-Aufruf gemacht."""
     task_id = _insert_task(tmp_path, status="NEU", imap_uid=None)
 
-    with patch("web.imap_poller.imap_move_to_nachweis") as mock_move:
+    with patch("web.app.imap_move_to_nachweis") as mock_move:
         response = client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
 
     assert response.status_code == 200
@@ -450,7 +450,7 @@ def test_task_erledigt_imap_fehler_blockiert_db_nicht(client, tmp_path):
     """IMAP-Fehler bei erledigt verhindert nicht die DB-Aktualisierung."""
     task_id = _insert_task(tmp_path, status="NEU", imap_uid="42")
 
-    with patch("web.imap_poller.imap_move_to_nachweis", side_effect=RuntimeError("IMAP down")):
+    with patch("web.app.imap_move_to_nachweis", side_effect=RuntimeError("IMAP down")):
         client.post(f"/tasks/{task_id}/erledigt", follow_redirects=True)
 
     db = sqlite3.connect(tmp_path / "checker.db")

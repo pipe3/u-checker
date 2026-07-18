@@ -1182,3 +1182,180 @@ def test_imap_delete_from_inbox_loescht_email(db_app):
     mock_imap.select.assert_called_with("INBOX")
     mock_imap.uid.assert_any_call("STORE", b"99", "+FLAGS", "\\Deleted")
     mock_imap.expunge.assert_called_once()
+
+
+# --- Task-Reply-Erkennung (Thread-Folgenachrichten, Issue #41) ---
+
+def _insert_task_mit_ausgehender_nachricht(
+    db_path, task_status="NEU", ausgehende_message_id="<antwort-1@example.com>"
+):
+    db = sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO tasks (status, empfangen_am, von_email, von_name, betreff, message_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (task_status, "2026-01-01T10:00:00", "max@example.com", "Max Mustermann",
+         "G25 Nachweis", "<original-1@example.com>"),
+    )
+    task_id = db.execute("SELECT id FROM tasks WHERE message_id = ?", ("<original-1@example.com>",)).fetchone()[0]
+    db.execute(
+        """INSERT INTO task_nachrichten
+           (task_id, richtung, zeitstempel, von_email, an_email, betreff, text, message_id)
+           VALUES (?, 'ausgehend', ?, ?, ?, ?, ?, ?)""",
+        (task_id, "2026-01-02T09:00:00", "admin@example.com", "max@example.com",
+         "Re: G25 Nachweis", "Bitte Nachweis nachreichen.", ausgehende_message_id),
+    )
+    db.commit()
+    db.close()
+    return task_id
+
+
+def test_thread_reply_erstellt_keinen_neuen_task(db_app):
+    """Eingehende Mail mit In-Reply-To-Treffer auf eine ausgehende Task-Nachricht erzeugt keinen neuen Task."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<antwort-1@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            result = poll_inbox(app)
+
+    assert result == 0
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    db.close()
+    assert count == 1  # nur der ursprüngliche Task, kein neuer
+
+
+def test_thread_reply_speichert_eingehende_task_nachricht(db_app):
+    """Eingehende Folgenachricht wird als eingehende task_nachrichten-Zeile am bestehenden Task gespeichert."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db")
+    raw = _make_reply_email(
+        in_reply_to="<antwort-1@example.com>",
+        message_id="<folge-1@example.com>",
+        body="Das Datum stimmt nicht.",
+    )
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchall()
+    db.close()
+    assert len(rows) == 1
+    assert rows[0]["von_email"] == "max@example.com"
+    assert rows[0]["message_id"] == "<folge-1@example.com>"
+    assert rows[0]["in_reply_to"] == "<antwort-1@example.com>"
+    assert rows[0]["imap_uid"] == "55"
+    assert rows[0]["raw_email"] == raw
+
+
+def test_thread_reply_aendert_task_status_nicht(db_app):
+    """Der Task-Status bleibt durch eine Thread-Folgenachricht unverändert."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db", task_status="UNKLARE_ZUORDNUNG")
+    raw = _make_reply_email(in_reply_to="<antwort-1@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "UNKLARE_ZUORDNUNG"
+
+
+def test_thread_reply_bleibt_in_inbox(db_app):
+    """Eingehende Thread-Folgenachrichten werden beim Polling nicht aus der INBOX verschoben."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_task_mit_ausgehender_nachricht(db_app / "checker.db")
+    raw = _make_reply_email(in_reply_to="<antwort-1@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    assert not mock_imap.copy.called
+
+
+def test_reply_auf_erledigten_task_erzeugt_neuen_task(db_app):
+    """Eine Antwort auf einen bereits ERLEDIGT-Task wird nicht mehr als Thread-Folgenachricht erkannt,
+    sondern läuft wie eine Mail ohne Header-Treffer als neuer Task durch."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db", task_status="ERLEDIGT")
+    raw = _make_reply_email(in_reply_to="<antwort-1@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            result = poll_inbox(app)
+
+    assert result == 1
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    thread_count = db.execute(
+        "SELECT COUNT(*) FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchone()[0]
+    db.close()
+    assert count == 2  # ursprünglicher Task + neuer Task für die unzuordenbare Antwort
+    assert thread_count == 0
+
+
+def test_verifikation_match_hat_vorrang_vor_task_reply_match(db_app):
+    """Prüfreihenfolge: Verifikationsmail-Match wird zuerst geprüft, auch wenn zufällig auch ein Task existiert."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db", message_id="<verif-123@example.com>")
+    _insert_task_mit_ausgehender_nachricht(db_app / "checker.db", ausgehende_message_id="<andere-antwort@example.com>")
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM email_verifikation").fetchone()
+    nachrichten_count = db.execute("SELECT COUNT(*) FROM task_nachrichten WHERE richtung = 'eingehend'").fetchone()[0]
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert nachrichten_count == 0
