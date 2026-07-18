@@ -55,13 +55,27 @@ def _build_message(person: Person, template: str, kommandanten_cc: list, betreff
     }
 
 
-def _send(msg: dict, smtp_config: dict):
+def _smtp_connect_and_send(smtp_config: dict, from_addr: str, to_addrs: list, mime: MIMEMultipart) -> None:
+    """Baut die SMTP-Verbindung auf (SSL/STARTTLS je nach Port) und versendet das MIME-Objekt."""
     host = smtp_config.get("host") or SMTP_HOST
     port = int(smtp_config.get("port") or SMTP_PORT)
     user = smtp_config.get("user") or SMTP_USER
     password = smtp_config.get("password") or SMTP_PASSWORD
-    from_addr = smtp_config.get("from_addr") or SMTP_FROM
 
+    if port == 465:
+        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
+    else:
+        ctx = smtplib.SMTP(host, port, timeout=10)
+    with ctx as server:
+        if port != 465:
+            server.starttls()
+        if user and password:
+            server.login(user, password)
+        server.sendmail(from_addr, to_addrs, mime.as_string())
+
+
+def _send(msg: dict, smtp_config: dict):
+    from_addr = smtp_config.get("from_addr") or SMTP_FROM
     to = msg["to"]
     to_list = to if isinstance(to, list) else [to]
     cc = msg.get("cc", [])
@@ -74,16 +88,7 @@ def _send(msg: dict, smtp_config: dict):
         mime["Cc"] = ", ".join(cc)
     mime.attach(MIMEText(msg["body"], "plain", "utf-8"))
 
-    if port == 465:
-        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
-    else:
-        ctx = smtplib.SMTP(host, port, timeout=10)
-    with ctx as server:
-        if port != 465:
-            server.starttls()
-        if user and password:
-            server.login(user, password)
-        server.sendmail(from_addr, to_list + cc, mime.as_string())
+    _smtp_connect_and_send(smtp_config, from_addr, to_list + cc, mime)
 
 
 def _build_zusammenfassung(
@@ -166,21 +171,7 @@ def send_verifikationsmail(
     mime["Subject"] = effective_betreff
     mime.attach(MIMEText(body, "plain", "utf-8"))
 
-    host = smtp_config.get("host") or SMTP_HOST
-    port = int(smtp_config.get("port") or SMTP_PORT)
-    user = smtp_config.get("user") or SMTP_USER
-    password = smtp_config.get("password") or SMTP_PASSWORD
-
-    if port == 465:
-        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
-    else:
-        ctx = smtplib.SMTP(host, port, timeout=10)
-    with ctx as server:
-        if port != 465:
-            server.starttls()
-        if user and password:
-            server.login(user, password)
-        server.sendmail(from_addr, [to_addr], mime.as_string())
+    _smtp_connect_and_send(smtp_config, from_addr, [to_addr], mime)
 
     return msg_id
 
@@ -211,21 +202,7 @@ def send_task_antwort(
         mime["References"] = in_reply_to
     mime.attach(MIMEText(text, "plain", "utf-8"))
 
-    host = smtp_config.get("host") or SMTP_HOST
-    port = int(smtp_config.get("port") or SMTP_PORT)
-    user = smtp_config.get("user") or SMTP_USER
-    password = smtp_config.get("password") or SMTP_PASSWORD
-
-    if port == 465:
-        ctx = smtplib.SMTP_SSL(host, port, timeout=10)
-    else:
-        ctx = smtplib.SMTP(host, port, timeout=10)
-    with ctx as server:
-        if port != 465:
-            server.starttls()
-        if user and password:
-            server.login(user, password)
-        server.sendmail(from_addr, [to_addr], mime.as_string())
+    _smtp_connect_and_send(smtp_config, from_addr, [to_addr], mime)
 
     return msg_id
 
