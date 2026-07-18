@@ -37,7 +37,7 @@ Eine E-Mail, die an ein Mitglied gesendet wird, um dessen E-Mail-Adresse zu best
 Eine Situation, die eintritt, wenn ein XLS-Import für ein bekanntes Mitglied (gleiche `Pers.-Nr.`) eine andere E-Mail-Adresse enthält als die zuletzt gespeicherte. Der Verifikationsstatus wird nicht automatisch zurückgesetzt – stattdessen wird das Flag `adresse_geaendert` gesetzt, damit der Admin die Situation manuell bewertet.
 
 ### Nachweis
-Ein eingehendes E-Mail mit einem Untersuchungsdokument (PDF oder Bild), das über IMAP empfangen und als Task verarbeitet wird. Ein eingehender Nachweis gilt auch als implizite Bestätigung der E-Mail-Adresse des Absenders, sofern das Mitglied zugeordnet werden kann.
+Ein eingehendes E-Mail mit einem Untersuchungsdokument (PDF oder Bild), das über IMAP empfangen und als Task verarbeitet wird. Ein eingehender Nachweis gilt auch als implizite Bestätigung der E-Mail-Adresse des Absenders, sofern das Mitglied zugeordnet werden kann. Ein Task erfordert keinen Nachweis im engeren Sinn – auch eine reine Text-Rückmeldung ohne Dokumentanhang wird als Task aufgenommen (siehe Task).
 
 ### IMAP-Verifikationsordner
 Ein IMAP-Unterordner (konfigurierbar, Standard: `u-checker-verifikation`), in den verarbeitete Antworten auf Verifikationsmails automatisch verschoben werden. Der Ordner wird beim ersten Bedarf automatisch angelegt. Dient der Übersicht im Postfach – verarbeitete Mails bleiben nicht im Posteingang.
@@ -52,7 +52,13 @@ Ein protokollierter Versand einer Fälligkeits-E-Mail an ein Mitglied für einen
 Veraltet. Bezeichnete früher die kombinierte Analyse+Versand-Operation als eine atomare Einheit. Seit Einführung des 2-Schritt-Flows (Analyse → Auswahl → Erinnerungsversand) kein eigenständiges Konzept mehr. Wird durch Analyse und Erinnerung ersetzt.
 
 ### Task
-Eine eingehende Nachricht im IMAP-Postfach, die als Nachweis-Eingang erkannt und zur manuellen Bearbeitung übernommen wurde. Antworten auf Verifikationsmails erzeugen keine Tasks. Das vollständige Raw-Email wird als BLOB in der Datenbank gespeichert – die DB ist die autoritative Quelle, nicht das IMAP-Postfach. Zusätzlich wird die IMAP-UID gespeichert, um den Task später im Postfach wiederfinden und verschieben zu können.
+Eine eingehende Nachricht im IMAP-Postfach, die zur manuellen Bearbeitung übernommen wurde. Ein Task entsteht unabhängig davon, ob ein Dokumentanhang vorhanden ist – die App ist der einzige Kanal, über den eingehende Mails gesichtet werden, daher wird grundsätzlich jede eingehende Mail zu einem Task, mit Ausnahme von Antworten auf Verifikationsmails (siehe Verifikationsmail) und Folgenachrichten zu einem bereits bestehenden Task (siehe Task-Nachricht). Das vollständige Raw-Email wird als BLOB in der Datenbank gespeichert – die DB ist die autoritative Quelle, nicht das IMAP-Postfach. Zusätzlich wird die IMAP-UID gespeichert, um den Task später im Postfach wiederfinden und verschieben zu können.
+
+### Task-Nachricht
+Ein einzelner Eintrag im Nachrichtenverlauf eines Tasks, eingehend oder ausgehend. Eingehende Folgenachrichten (z.B. eine erneute Antwort der Person) werden über den `In-Reply-To`-Header einer bereits gesendeten Task-Nachricht demselben Task zugeordnet, statt einen neuen Task zu erzeugen – nur wenn kein passender Header-Treffer existiert, entsteht ein neuer Task. Ausgehende Task-Nachrichten sind freie Antworten des Admins auf einen Task (siehe Antwort), keine Erinnerung und keine Verifikationsmail. Ein Dokumentanhang einer eingehenden Folgenachricht wird als Teil der Task-Nachricht angezeigt, löst aber keine erneute Zuordnung oder implizite Verifikations-Bestätigung aus (Unterschied zur ursprünglichen Nachweis-Zuordnung des Tasks).
+
+### Antwort
+Eine vom Admin verfasste, freie Text-Nachricht an den Absender eines Tasks, direkt aus der Task-Ansicht gesendet. Wird als Task-Nachricht (ausgehend) im Thread des Tasks gespeichert. Der Empfänger ist vorausgefüllt mit der Absenderadresse der eingehenden Mail, aber vor dem Senden änderbar (relevant bei `ABWEICHENDE_ZUORDNUNG`, wo Absender und zugeordnete Person auseinanderfallen). Geht ohne gesonderten Bestätigungsschritt sofort raus. Nicht zu verwechseln mit Erinnerung oder Verifikationsmail – eine Antwort ist immer an genau eine Person gerichtet und reagiert auf eine konkrete eingehende Nachricht, nicht auf eine Fälligkeit oder Adressverifikation.
 
 ### Task-Status
 Ein Task durchläuft folgende Zustände:

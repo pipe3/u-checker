@@ -4,11 +4,13 @@ Kontext für eine neue Claude Code Instanz, die dieses Projekt weiterentwickelt.
 
 ---
 
-## Was dieses Script tut
+## Was dieses Projekt ist
 
-Liest einen XLS-Export aus **MP-Feuer** (Feuerwehrverwaltungssoftware) und verschickt automatisch E-Mail-Benachrichtigungen an Feuerwehrmitglieder, deren Untersuchungsfristen ablaufen oder bereits abgelaufen sind.
+u-checker ist aus einem CLI-Script gewachsen zu einer vollständigen Nachweis-Verwaltungs-Web-App für die Feuerwehr. Sie liest XLS-Exporte aus **MP-Feuer** (Feuerwehrverwaltungssoftware), verwaltet Fälligkeiten ablaufender Untersuchungen, verifiziert E-Mail-Adressen von Mitgliedern und verarbeitet eingehende Nachweis-Dokumente per IMAP.
 
-**Aufruf:**
+**Für Domänenbegriffe (Prüfung, Verifikation, Nachweis, Task, ...) und Architekturentscheidungen ist `CONTEXT.md` + `docs/adr/` die maßgebliche Quelle** – nicht dieser Abschnitt. Diese Datei hier hält nur Meta-Anleitung für Agenten fest, keine sich schnell ändernden Produktdetails.
+
+Web-App-Code liegt unter `web/` (`app.py`, `imap_poller.py`, `scheduler.py`, `pdf_export.py`). Das ursprüngliche CLI-Script (`main.py`) besteht als Ausgangspunkt fort:
 ```bash
 python main.py export.xls --dry-run   # Ausgabe im Terminal, kein Versand
 python main.py export.xls             # echte Emails versenden
@@ -66,20 +68,9 @@ PRUEFUNGSTYPEN    # kommagetrennt (Standard: G25, erweiterbar auf G26, FSK, ...)
 
 ---
 
-## Aktueller Stand / Prototyp
+## Aktueller Stand
 
-- Prototyp läuft, mit Testdaten erfolgreich getestet (`--dry-run`)
-- SMTP-Versand implementiert aber noch nicht mit echtem Mailserver getestet
-- Prüfungstyp im Prototyp: nur `G25` – Ziel ist später alle Typen konfigurierbar
-- Email-Template editierbar in `templates/email.txt`
-- Noch kein echter Produktivtest mit realem MP-Feuer Export durchgeführt
-
-## Mögliche nächste Schritte
-
-- SMTP-Versand mit echtem Mailserver testen
-- Weitere Prüfungstypen aktivieren (G26, FSK)
-- Zusammenfassung für Kommandanten (eine Email mit allen Fälligkeiten statt nur CC)
-- Logging in Datei (wer wurde wann benachrichtigt)
+Zielarchitektur und offene Punkte sind in `PRD-nachweis-app.md` und den ADRs unter `docs/adr/` dokumentiert – dort nachsehen statt hier eine Momentaufnahme zu pflegen, die veraltet.
 
 ---
 
