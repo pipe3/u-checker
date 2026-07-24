@@ -65,6 +65,8 @@
   }
   .btn-löschen:hover { background: #5a6268; }
   .kein-xls-hint { font-size: 0.82rem; color: #856404; margin: 0.2rem 0 0.8rem; }
+  .btn-sekundaer { padding: 0.5rem 1.4rem; background: #6c757d; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
+  .btn-sekundaer:hover { background: #5a6268; }
 </style>
 {% endblock %}
 
@@ -122,6 +124,9 @@
     {% endif %}
     {% endif %}
     <a class="kachel-link" href="{{ url_for('nachweise') }}">Nachweise öffnen →</a>
+    <form method="post" action="{{ url_for('imap_poll') }}" style="margin-top:0.5rem;">
+      <button type="submit" class="btn-sekundaer">Posteingang abrufen</button>
+    </form>
   </div>
 
   <div class="kachel">

@@ -352,7 +352,7 @@ def poll_inbox(app) -> int:
         imap = None
         fetched: list[tuple[bytes, bytes, str | None]] = []  # (imap_msg_id, raw_bytes, imap_uid)
         try:
-            imap = imaplib.IMAP4_SSL(imap_host, imap_port)
+            imap = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=30)
             imap.login(imap_user, imap_password)
             imap.select("INBOX")
 
@@ -372,7 +372,7 @@ def poll_inbox(app) -> int:
                     imap.logout()
                 except Exception:
                     pass
-            return 0
+            raise
 
         # Separate Verifikationsantworten, Task-Thread-Folgenachrichten und normale Mails
         verif_replies: list[tuple[str, bytes]] = []   # (pers_nr, imap_msg_id)

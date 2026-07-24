@@ -1075,13 +1075,14 @@ def settings_save():
     return redirect(url_for("settings_page"))
 
 
-@app.route("/settings/imap-poll", methods=["POST"])
-def settings_imap_poll():
+def _do_imap_poll() -> None:
+    """Führt einen manuellen IMAP-Poll aus und setzt die Flash-Message. Gemeinsame Logik für
+    /imap-poll und /settings/imap-poll, die sich nur im abschließenden Redirect unterscheiden."""
     from web.imap_poller import poll_inbox
     cfg = get_settings()
     if not cfg.get("imap_host", "").strip():
         flash("Bitte zuerst IMAP-Host in den Einstellungen eintragen.", "error")
-        return redirect(url_for("settings_page"))
+        return
     try:
         new_count = poll_inbox(app)
         if new_count > 0:
@@ -1090,6 +1091,17 @@ def settings_imap_poll():
             flash("Keine neuen Nachrichten im Posteingang.", "success")
     except Exception as e:
         flash(f"IMAP-Fehler – {type(e).__name__}: {e}", "error")
+
+
+@app.route("/imap-poll", methods=["POST"])
+def imap_poll():
+    _do_imap_poll()
+    return redirect(url_for("index"))
+
+
+@app.route("/settings/imap-poll", methods=["POST"])
+def settings_imap_poll():
+    _do_imap_poll()
     return redirect(url_for("settings_page"))
 
 

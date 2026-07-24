@@ -249,9 +249,10 @@ def test_poll_ignoriert_duplikate(db_app):
     mock_notify.assert_not_called()
 
 
-def test_poll_fehler_beim_imap_abruf_gibt_null_zurueck(db_app):
+def test_poll_fehler_beim_imap_abruf_wirft_exception(db_app):
     from web.imap_poller import poll_inbox
     from web.app import save_settings
+    import pytest
 
     with app.app_context():
         save_settings({
@@ -260,10 +261,46 @@ def test_poll_fehler_beim_imap_abruf_gibt_null_zurueck(db_app):
             "imap_user": "test@example.com",
             "imap_password": "pass",
         })
-        with patch("web.imap_poller.imaplib.IMAP4_SSL", side_effect=ConnectionRefusedError("Verbindung abgelehnt")):
-            result = poll_inbox(app)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", side_effect=ConnectionRefusedError("Verbindung abgelehnt")), \
+             pytest.raises(ConnectionRefusedError):
+            poll_inbox(app)
 
-    assert result == 0
+
+def test_poll_timeout_beim_imap_abruf_wirft_exception(db_app):
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+    import pytest
+
+    with app.app_context():
+        save_settings({
+            "imap_host": "imap.example.com",
+            "imap_port": "993",
+            "imap_user": "test@example.com",
+            "imap_password": "pass",
+        })
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", side_effect=TimeoutError("timed out")), \
+             pytest.raises(TimeoutError):
+            poll_inbox(app)
+
+
+def test_poll_inbox_verwendet_timeout_dreissig_sekunden(db_app):
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b""])
+
+    with app.app_context():
+        save_settings({
+            "imap_host": "imap.example.com",
+            "imap_port": "993",
+            "imap_user": "test@example.com",
+            "imap_password": "pass",
+        })
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap) as mock_ssl:
+            poll_inbox(app)
+
+    mock_ssl.assert_called_once_with("imap.example.com", 993, timeout=30)
 
 
 # --- Extraktion + UNKLARE_ZUORDNUNG + Duplikate ---
