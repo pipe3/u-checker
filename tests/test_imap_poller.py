@@ -1398,6 +1398,194 @@ def test_verifikation_match_hat_vorrang_vor_task_reply_match(db_app):
     assert nachrichten_count == 0
 
 
+def _insert_task_ohne_ausgehende_nachricht(db_path, task_status="NEU", message_id="<original-1@example.com>"):
+    db = sqlite3.connect(db_path)
+    db.execute(
+        """INSERT INTO tasks (status, empfangen_am, von_email, von_name, betreff, message_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (task_status, "2026-01-01T10:00:00", "max@example.com", "Max Mustermann",
+         "G25 Nachweis", message_id),
+    )
+    task_id = db.execute("SELECT id FROM tasks WHERE message_id = ?", (message_id,)).fetchone()[0]
+    db.commit()
+    db.close()
+    return task_id
+
+
+def test_thread_reply_auf_urspruengliche_task_mail_ohne_admin_antwort(db_app):
+    """Eingehende Antwort auf tasks.message_id (ohne je gesendete Admin-Antwort) wird dem
+    bestehenden Task zugeordnet, statt einen neuen Task zu erzeugen (Issue #46)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_ohne_ausgehende_nachricht(db_app / "checker.db")
+
+    raw = _make_reply_email(in_reply_to="<original-1@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            result = poll_inbox(app)
+
+    assert result == 0
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    rows = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchall()
+    db.close()
+    assert count == 1  # kein neuer Task
+    assert len(rows) == 1
+    assert rows[0]["message_id"] == "<folge-1@example.com>"
+
+
+def test_thread_reply_auf_eingehende_folgenachricht_dreistufige_kette(db_app):
+    """Eine dritte Nachricht (C), die per In-Reply-To auf eine bereits gespeicherte eingehende
+    Folgenachricht (B) antwortet, wird ebenfalls demselben Task zugeordnet (Issue #46)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db")
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute(
+        """INSERT INTO task_nachrichten
+           (task_id, richtung, zeitstempel, von_email, betreff, message_id, in_reply_to)
+           VALUES (?, 'eingehend', ?, ?, ?, ?, ?)""",
+        (task_id, "2026-01-03T09:00:00", "max@example.com", "Re: G25 Nachweis",
+         "<folge-b@example.com>", "<antwort-1@example.com>"),
+    )
+    db.commit()
+    db.close()
+
+    raw = _make_reply_email(in_reply_to="<folge-b@example.com>", message_id="<folge-c@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 77 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            result = poll_inbox(app)
+
+    assert result == 0
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    rows = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchall()
+    db.close()
+    assert count == 1
+    assert len(rows) == 2
+    assert any(r["message_id"] == "<folge-c@example.com>" for r in rows)
+
+
+def test_thread_reply_kette_im_selben_poll_durchlauf(db_app):
+    """B und C treffen im selben poll_inbox-Aufruf ein: C (In-Reply-To=B) muss trotzdem dem
+    Task zugeordnet werden, obwohl B zum Zeitpunkt der Prüfung noch nicht in der DB steht,
+    weil task_nachrichten erst nach der Matching-Schleife commitet wird (Issue #46)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_ohne_ausgehende_nachricht(db_app / "checker.db")
+
+    raw_b = _make_reply_email(in_reply_to="<original-1@example.com>", message_id="<folge-b@example.com>")
+    raw_c = _make_reply_email(in_reply_to="<folge-b@example.com>", message_id="<folge-c@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1 2"])
+    mock_imap.fetch.side_effect = [
+        ("OK", [(b"1 (UID 55 RFC822 {100})", raw_b)]),
+        ("OK", [(b"2 (UID 56 RFC822 {100})", raw_c)]),
+    ]
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            result = poll_inbox(app)
+
+    assert result == 0
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    rows = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchall()
+    db.close()
+    assert count == 1  # kein neuer Task für C
+    assert len(rows) == 2
+    assert {r["message_id"] for r in rows} == {"<folge-b@example.com>", "<folge-c@example.com>"}
+
+
+def test_reply_auf_urspruengliche_mail_eines_erledigten_tasks_erzeugt_neuen_task(db_app):
+    """Antwort auf tasks.message_id eines bereits ERLEDIGT-Tasks bleibt unzugeordnet und erzeugt
+    weiterhin einen neuen, unabhängigen Task (Regressionstest für erweiterten Query-Pfad)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_ohne_ausgehende_nachricht(
+        db_app / "checker.db", task_status="ERLEDIGT", message_id="<original-erledigt@example.com>"
+    )
+
+    raw = _make_reply_email(in_reply_to="<original-erledigt@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap), \
+             patch("web.imap_poller._send_admin_notification"):
+            result = poll_inbox(app)
+
+    assert result == 1
+    db = sqlite3.connect(db_app / "checker.db")
+    count = db.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    thread_count = db.execute(
+        "SELECT COUNT(*) FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchone()[0]
+    db.close()
+    assert count == 2  # ursprünglicher Task + neuer Task für die unzuordenbare Antwort
+    assert thread_count == 0
+
+
+def test_verifikation_match_hat_vorrang_vor_task_message_id_match(db_app):
+    """Verifikationsmail-Match hat weiterhin Vorrang, auch wenn zusätzlich tasks.message_id
+    auf dieselbe In-Reply-To-Message-ID passt (Issue #46, Regressionstest)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    _insert_verifikation(db_app / "checker.db", message_id="<verif-123@example.com>")
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute(
+        """INSERT INTO tasks (status, empfangen_am, von_email, von_name, betreff, message_id)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        ("NEU", "2026-01-01T10:00:00", "max@example.com", "Max Mustermann",
+         "G25 Nachweis", "<verif-123@example.com>"),
+    )
+    db.commit()
+    db.close()
+
+    raw = _make_reply_email(in_reply_to="<verif-123@example.com>", message_id="<folge-1@example.com>")
+    mock_imap = _make_mock_imap(raw)
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT status FROM email_verifikation").fetchone()
+    nachrichten_count = db.execute("SELECT COUNT(*) FROM task_nachrichten WHERE richtung = 'eingehend'").fetchone()[0]
+    db.close()
+    assert row["status"] == "bestaetigt"
+    assert nachrichten_count == 0
+
+
 # --- open_sent_connection / close_sent_connection ---
 
 def test_open_sent_connection_stellt_ordner_sicher(db_app):

@@ -379,10 +379,16 @@ def poll_inbox(app) -> int:
         task_replies: list[tuple[int, bytes, bytes, str | None]] = []  # (task_id, imap_msg_id, raw_bytes, imap_uid)
         normal_emails: list[tuple[bytes, bytes, str | None]] = []  # (imap_msg_id, raw_bytes, imap_uid)
 
+        # Message-IDs bereits im aktuellen Batch erkannter Task-Folgenachrichten, damit eine
+        # mehrstufige Kette (A -> B -> C) auch dann vollständig zugeordnet wird, wenn B und C
+        # im selben Poll-Durchlauf eintreffen (B ist zu diesem Zeitpunkt noch nicht in der DB).
+        batch_message_id_to_task: dict[str, int] = {}
+
         with closing(get_db()) as db:
             for imap_msg_id, raw, uid in fetched:
                 msg = email.message_from_bytes(raw)
                 in_reply_to = (msg.get("In-Reply-To") or "").strip()
+                message_id = (msg.get("Message-ID") or "").strip()
                 if in_reply_to:
                     row = db.execute(
                         "SELECT pers_nr FROM email_verifikation WHERE verifikationsmail_message_id = ?",
@@ -391,14 +397,21 @@ def poll_inbox(app) -> int:
                     if row:
                         verif_replies.append((row["pers_nr"], imap_msg_id))
                         continue
+                    batch_task_id = batch_message_id_to_task.get(in_reply_to)
                     task_row = db.execute(
-                        """SELECT tn.task_id FROM task_nachrichten tn
+                        """SELECT t.id AS task_id FROM tasks t
+                           WHERE t.message_id = ? AND t.status != 'ERLEDIGT'
+                           UNION
+                           SELECT tn.task_id FROM task_nachrichten tn
                            JOIN tasks t ON t.id = tn.task_id
-                           WHERE tn.message_id = ? AND tn.richtung = 'ausgehend' AND t.status != 'ERLEDIGT'""",
-                        (in_reply_to,),
+                           WHERE tn.message_id = ? AND t.status != 'ERLEDIGT'""",
+                        (in_reply_to, in_reply_to),
                     ).fetchone()
-                    if task_row:
-                        task_replies.append((task_row["task_id"], imap_msg_id, raw, uid))
+                    task_id = task_row["task_id"] if task_row else batch_task_id
+                    if task_id:
+                        task_replies.append((task_id, imap_msg_id, raw, uid))
+                        if message_id:
+                            batch_message_id_to_task[message_id] = task_id
                         continue
                 normal_emails.append((imap_msg_id, raw, uid))
 
