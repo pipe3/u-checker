@@ -183,7 +183,8 @@
         {% endif %}
         {% endif %}
 
-        <button type="button" class="antworten" onclick="oeffneThreadModal({{ task['id'] }})">Antworten</button>
+        {% set nachrichten_anzahl = nachrichten_counts.get(task['id'], 0) %}
+        <button type="button" class="antworten" onclick="oeffneThreadModal({{ task['id'] }})">Antworten{% if nachrichten_anzahl %} ({{ nachrichten_anzahl }}){% endif %}</button>
 
         {% if task["raw_email"] %}
         <a class="btn-link" href="/tasks/{{ task['id'] }}/pdf">PDF</a>

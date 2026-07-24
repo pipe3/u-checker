@@ -1,3 +1,4 @@
+import email
 import logging
 import os
 import re
@@ -224,6 +225,7 @@ def init_db():
         _migrate_tasks(db)
         _migrate_email_verifikation(db)
         _migrate_settings(db)
+        _migrate_task_nachrichten_text(db)
         db.commit()
 
 
@@ -302,6 +304,25 @@ def _migrate_email_verifikation(db):
     existing = {row[1] for row in db.execute("PRAGMA table_info(email_verifikation)").fetchall()}
     if "bestaetigung_herkunft" not in existing:
         db.execute("ALTER TABLE email_verifikation ADD COLUMN bestaetigung_herkunft TEXT")
+
+
+def _migrate_task_nachrichten_text(db):
+    """Befüllt text=NULL bei eingehenden Task-Nachrichten nachträglich aus raw_email (Issue #51).
+
+    Betrifft Zeilen, die vor dem Fix im IMAP-Poller gespeichert wurden, als die Body-Extraktion
+    für Thread-Folgenachrichten fehlte. Idempotent: bereits befüllte Zeilen werden nicht angefasst.
+    """
+    from web.extractor import collect_body_text_from_email
+
+    rows = db.execute(
+        """SELECT id, raw_email FROM task_nachrichten
+           WHERE richtung = 'eingehend' AND text IS NULL AND raw_email IS NOT NULL"""
+    ).fetchall()
+    for row in rows:
+        msg = email.message_from_bytes(row["raw_email"])
+        text = collect_body_text_from_email(msg)
+        if text:
+            db.execute("UPDATE task_nachrichten SET text = ? WHERE id = ?", (text, row["id"]))
 
 
 def get_settings() -> dict:
@@ -449,6 +470,17 @@ def nachweise():
         else:
             tasks = db.execute(_base + " ORDER BY empfangen_am DESC").fetchall()
 
+        task_ids = [t["id"] for t in tasks]
+        nachrichten_counts = {}
+        if task_ids:
+            platzhalter = ",".join("?" * len(task_ids))
+            nachrichten_count_rows = db.execute(
+                f"SELECT task_id, COUNT(*) AS anzahl FROM task_nachrichten"
+                f" WHERE task_id IN ({platzhalter}) GROUP BY task_id",
+                task_ids,
+            ).fetchall()
+            nachrichten_counts = {r["task_id"]: r["anzahl"] for r in nachrichten_count_rows}
+
     verfuegbare_typen = [r["pruefungstyp"] for r in typen_rows]
 
     members = []
@@ -461,6 +493,7 @@ def nachweise():
         members=members,
         verfuegbare_typen=verfuegbare_typen,
         aktiver_typ=typ_filter,
+        nachrichten_counts=nachrichten_counts,
     )
 
 

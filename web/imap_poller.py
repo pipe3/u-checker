@@ -14,6 +14,7 @@ from email.mime.text import MIMEText
 
 from web.extractor import (
     bestimme_zuordnung,
+    collect_body_text_from_email,
     extract_from_email,
     load_members_from_xls,
     _iter_dokument_parts,
@@ -426,13 +427,14 @@ def poll_inbox(app) -> int:
                     betreff = _decode_header_value(msg.get("Subject", ""))
                     message_id = (msg.get("Message-ID") or "").strip() or None
                     in_reply_to = (msg.get("In-Reply-To") or "").strip() or None
+                    text = collect_body_text_from_email(msg)
                     zeitstempel = datetime.now().isoformat(timespec="seconds")
                     db.execute(
                         """INSERT INTO task_nachrichten
-                               (task_id, richtung, zeitstempel, von_email, betreff, raw_email,
+                               (task_id, richtung, zeitstempel, von_email, betreff, text, raw_email,
                                 message_id, in_reply_to, imap_uid)
-                           VALUES (?, 'eingehend', ?, ?, ?, ?, ?, ?, ?)""",
-                        (task_id, zeitstempel, von_email or None, betreff or None, raw,
+                           VALUES (?, 'eingehend', ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (task_id, zeitstempel, von_email or None, betreff or None, text, raw,
                          message_id, in_reply_to, uid),
                     )
                 db.commit()

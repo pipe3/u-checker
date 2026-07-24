@@ -1029,3 +1029,27 @@ def test_erledigt_ein_fehlschlag_blockiert_andere_uids_nicht(client, tmp_path):
     db.close()
     assert row["status"] == "ERLEDIGT"
 
+
+def test_antworten_button_ohne_verlauf_zeigt_keine_anzahl(client, tmp_path):
+    """Ohne vorhandene Task-Nachrichten bleibt die Button-Beschriftung schlicht 'Antworten'."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"oeffneThreadModal({task_id})\">Antworten</button>" in body
+
+
+def test_antworten_button_zeigt_anzahl_vorhandener_nachrichten(client, tmp_path):
+    """Mit vorhandenem Verlauf zeigt der Button die Anzahl der Nachrichten an, z.B. 'Antworten (2)'."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="eingehend")
+    _db_insert_task_nachricht(db_path, task_id=task_id, richtung="ausgehend")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"oeffneThreadModal({task_id})\">Antworten (2)</button>" in body
+

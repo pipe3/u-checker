@@ -118,6 +118,15 @@ def collect_text_from_email(msg, dokument_text: Optional[str] = None) -> str:
     return "\n".join(p for p in parts if p)
 
 
+def collect_body_text_from_email(msg) -> Optional[str]:
+    """Extrahiert nur den Klartext-Body einer Email (kein Anhang-Text), oder None wenn leer.
+
+    Für Thread-Nachrichten (eingehende Task-Antworten): Anhänge einer Folgenachricht werden
+    separat behandelt (siehe Task-Nachricht in CONTEXT.md), daher hier bewusst kein Dokument-Text.
+    """
+    return collect_text_from_email(msg, dokument_text="") or None
+
+
 def parse_pruefungstyp(text: str, valid_types: list[str]) -> Optional[str]:
     """Sucht den ersten bekannten Prüfungstyp (Wortgrenze) im Text.
 

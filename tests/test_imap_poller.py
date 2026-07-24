@@ -1301,6 +1301,41 @@ def test_thread_reply_speichert_eingehende_task_nachricht(db_app):
     assert rows[0]["in_reply_to"] == "<antwort-1@example.com>"
     assert rows[0]["imap_uid"] == "55"
     assert rows[0]["raw_email"] == raw
+    assert rows[0]["text"].strip() == "Das Datum stimmt nicht."
+
+
+def test_thread_reply_ohne_text_plain_bleibt_text_leer(db_app):
+    """Eine Folgenachricht ohne extrahierbaren Klartext-Body speichert text = NULL (unverändertes Fallback-Verhalten)."""
+    from web.imap_poller import poll_inbox
+    from web.app import save_settings
+
+    task_id = _insert_task_mit_ausgehender_nachricht(db_app / "checker.db")
+    msg = email.message.EmailMessage()
+    msg["From"] = "Max Mustermann <max@example.com>"
+    msg["Subject"] = "Re: G25 Nachweis"
+    msg["Message-ID"] = "<folge-1@example.com>"
+    msg["In-Reply-To"] = "<antwort-1@example.com>"
+    msg["Date"] = "Mon, 01 Jan 2025 12:00:00 +0000"
+    msg.set_content("<p>Nur HTML</p>", subtype="html")
+    raw = msg.as_bytes()
+
+    mock_imap = MagicMock()
+    mock_imap.search.return_value = ("OK", [b"1"])
+    mock_imap.fetch.return_value = ("OK", [(b"1 (UID 55 RFC822 {100})", raw)])
+
+    with app.app_context():
+        save_settings(_IMAP_SETTINGS)
+        with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+            poll_inbox(app)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = db.execute(
+        "SELECT * FROM task_nachrichten WHERE task_id = ? AND richtung = 'eingehend'", (task_id,)
+    ).fetchall()
+    db.close()
+    assert len(rows) == 1
+    assert rows[0]["text"] is None
 
 
 def test_thread_reply_aendert_task_status_nicht(db_app):
@@ -1755,3 +1790,85 @@ def test_imap_retention_cleanup_logout_wird_immer_aufgerufen(db_app):
         imap_retention_cleanup(_RETENTION_CFG, ["INBOX.Sent"], 90)
 
     mock_imap.logout.assert_called_once()
+
+
+# --- Backfill: text-Feld für bereits gespeicherte eingehende Task-Nachrichten (Issue #51) ---
+
+def _insert_task_nachricht_ohne_text(db_path, raw_email: bytes, task_id=None):
+    db = sqlite3.connect(db_path)
+    if task_id is None:
+        db.execute(
+            """INSERT INTO tasks (status, empfangen_am, von_email, von_name, betreff, message_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("NEU", "2026-01-01T10:00:00", "max@example.com", "Max Mustermann",
+             "G25 Nachweis", "<original-backfill@example.com>"),
+        )
+        task_id = db.execute(
+            "SELECT id FROM tasks WHERE message_id = ?", ("<original-backfill@example.com>",)
+        ).fetchone()[0]
+    db.execute(
+        """INSERT INTO task_nachrichten (task_id, richtung, zeitstempel, von_email, raw_email)
+           VALUES (?, 'eingehend', ?, ?, ?)""",
+        (task_id, "2026-01-02T09:00:00", "max@example.com", raw_email),
+    )
+    db.commit()
+    db.close()
+    return task_id
+
+
+def test_migrate_backfill_befuellt_fehlenden_text_aus_raw_email(db_app):
+    """Bestehende eingehende Task-Nachrichten mit text=NULL werden aus raw_email nachträglich befüllt."""
+    from web.app import _migrate_task_nachrichten_text
+
+    raw = _make_reply_email(body="Nachträglich befüllter Text.")
+    _insert_task_nachricht_ohne_text(db_app / "checker.db", raw)
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    _migrate_task_nachrichten_text(db)
+    db.commit()
+    row = db.execute("SELECT text FROM task_nachrichten WHERE richtung = 'eingehend'").fetchone()
+    db.close()
+    assert row["text"].strip() == "Nachträglich befüllter Text."
+
+
+def test_migrate_backfill_laesst_bereits_befuellten_text_unveraendert(db_app):
+    """Idempotenz: Zeilen, die bereits einen Text haben, werden von der Migration nicht angefasst."""
+    from web.app import _migrate_task_nachrichten_text
+
+    raw = _make_reply_email(body="Anderer Inhalt in raw_email.")
+    task_id = _insert_task_nachricht_ohne_text(db_app / "checker.db", raw)
+    db = sqlite3.connect(db_app / "checker.db")
+    db.execute(
+        "UPDATE task_nachrichten SET text = ? WHERE task_id = ?",
+        ("Bereits vorhandener Text.", task_id),
+    )
+    db.commit()
+    db.close()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    _migrate_task_nachrichten_text(db)
+    db.commit()
+    row = db.execute("SELECT text FROM task_nachrichten WHERE richtung = 'eingehend'").fetchone()
+    db.close()
+    assert row["text"] == "Bereits vorhandener Text."
+
+
+def test_migrate_backfill_init_db_ist_idempotent(db_app):
+    """init_db() ruft die Backfill-Migration bereits mit auf; mehrfaches init_db() verändert nichts erneut."""
+    from web.app import init_db
+
+    raw = _make_reply_email(body="Über init_db befüllt.")
+    _insert_task_nachricht_ohne_text(db_app / "checker.db", raw)
+
+    with app.app_context():
+        app.config["DATA_DIR"] = db_app
+        init_db()
+        init_db()
+
+    db = sqlite3.connect(db_app / "checker.db")
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT text FROM task_nachrichten WHERE richtung = 'eingehend'").fetchone()
+    db.close()
+    assert row["text"].strip() == "Über init_db befüllt."
