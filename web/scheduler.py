@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 _scheduler: BackgroundScheduler | None = None
 IMAP_JOB_ID = "imap_poll"
 ARCHIV_CLEANUP_JOB_ID = "archiv_cleanup"
+IMAP_RETENTION_JOB_ID = "imap_retention_cleanup"
 IMAP_POLL_MINUTEN_DEFAULT = 5
 
 
@@ -55,6 +56,15 @@ def start(app) -> None:
             replace_existing=True,
         )
 
+        sched.add_job(
+            _imap_retention_job,
+            trigger="interval",
+            hours=24,
+            id=IMAP_RETENTION_JOB_ID,
+            args=[app],
+            replace_existing=True,
+        )
+
 
 def reschedule(app) -> None:
     if app.config.get("TESTING"):
@@ -90,6 +100,15 @@ def reschedule(app) -> None:
                 args=[app],
             )
 
+        if not sched.get_job(IMAP_RETENTION_JOB_ID):
+            sched.add_job(
+                _imap_retention_job,
+                trigger="interval",
+                hours=24,
+                id=IMAP_RETENTION_JOB_ID,
+                args=[app],
+            )
+
 
 def stop() -> None:
     global _scheduler
@@ -117,3 +136,22 @@ def _archiv_cleanup_job(app) -> None:
                 logger.info("Archiv-Cleanup: %d veraltete Tasks gelöscht", deleted)
     except Exception:
         logger.exception("Archiv-Cleanup fehlgeschlagen")
+
+
+def _imap_retention_job(app) -> None:
+    try:
+        with app.app_context():
+            from web.app import SETTINGS_DEFAULTS, _safe_int, get_settings
+            from web.imap_poller import imap_retention_cleanup
+
+            cfg = get_settings()
+            retention_tage = max(1, _safe_int(cfg.get("imap_retention_tage"), 90))
+            ordner_liste = [
+                (cfg.get(key) or SETTINGS_DEFAULTS[key]).strip()
+                for key in ("imap_sent_ordner", "imap_nachweis_ordner", "imap_verifikation_ordner")
+            ]
+            deleted = imap_retention_cleanup(cfg, ordner_liste, retention_tage)
+            if deleted:
+                logger.info("IMAP-Retention: %d veraltete Mails gelöscht", deleted)
+    except Exception:
+        logger.exception("IMAP-Retention fehlgeschlagen")

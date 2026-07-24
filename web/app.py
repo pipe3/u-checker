@@ -25,7 +25,7 @@ from u_checker.mailer import DEFAULT_VERIFIKATIONS_BETREFF as _DEFAULT_VERIFIKAT
 from u_checker.mailer import DEFAULT_VERIFIKATIONS_TEMPLATE as _DEFAULT_VERIFIKATIONS_TEMPLATE
 from u_checker.mailer import send_simple_mail, send_task_antwort, send_verifikationsmail
 from web.extractor import load_members_from_xls
-from web.imap_poller import imap_move_to_nachweis
+from web.imap_poller import close_sent_connection, imap_move_to_nachweis, open_sent_connection
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,8 @@ SETTINGS_DEFAULTS = {
     "verifikation_template": _DEFAULT_VERIFIKATIONS_TEMPLATE,
     "imap_verifikation_ordner": "u-checker-verifikation",
     "imap_nachweis_ordner": "Nachweise",
+    "imap_sent_ordner": "INBOX.Sent",
+    "imap_retention_tage": "90",
 }
 
 
@@ -321,6 +323,20 @@ def _build_smtp_config(cfg: dict) -> dict:
         "password": cfg.get("smtp_password", ""),
         "from_addr": cfg.get("smtp_from", ""),
     }
+
+
+def _sent_ordner(cfg: dict) -> str:
+    return (cfg.get("imap_sent_ordner") or "INBOX.Sent").strip()
+
+
+def _open_sent_connection(cfg: dict):
+    """Baut best-effort eine IMAP-Verbindung für den Sent-Ordner-Nachbau auf (None bei Fehler)."""
+    sent_ordner = _sent_ordner(cfg)
+    try:
+        return open_sent_connection(cfg, sent_ordner)
+    except Exception:
+        logger.warning("Sent-Ordner-Verbindung konnte nicht aufgebaut werden", exc_info=True)
+        return None
 
 
 @app.before_request
@@ -625,6 +641,8 @@ def task_antworten(task_id: int):
 
         cfg = get_settings()
         smtp_config = _build_smtp_config(cfg)
+        sent_ordner = _sent_ordner(cfg)
+        imap_conn = _open_sent_connection(cfg)
         try:
             neue_message_id = send_task_antwort(
                 smtp_config=smtp_config,
@@ -632,11 +650,15 @@ def task_antworten(task_id: int):
                 betreff=betreff,
                 text=text,
                 in_reply_to=in_reply_to,
+                imap_connection=imap_conn,
+                sent_ordner=sent_ordner,
             )
         except Exception as e:
             logger.exception("Antwort auf Task %d fehlgeschlagen", task_id)
             flash(f"Fehler beim Senden der Antwort: {e}", "error")
             return redirect(_nachweise_url())
+        finally:
+            close_sent_connection(imap_conn)
 
         now = datetime.now().isoformat(timespec="seconds")
         db.execute(
@@ -834,6 +856,7 @@ def email_pruefung_senden():
 
     cfg = get_settings()
     smtp_config = _build_smtp_config(cfg)
+    sent_ordner = _sent_ordner(cfg)
     verifikation_betreff = cfg.get("verifikation_betreff") or _DEFAULT_VERIFIKATIONS_BETREFF
     verifikation_template = cfg.get("verifikation_template") or _DEFAULT_VERIFIKATIONS_TEMPLATE
     gesendet = 0
@@ -854,6 +877,7 @@ def email_pruefung_senden():
                 db.commit()
                 flash(f"Ungültige E-Mail-Adresse übersprungen: {row['email']}", "error")
                 continue
+            imap_conn = _open_sent_connection(cfg)
             try:
                 msg_id = send_verifikationsmail(
                     smtp_config=smtp_config,
@@ -862,6 +886,8 @@ def email_pruefung_senden():
                     nachname=row["nachname"],
                     betreff=verifikation_betreff,
                     template=verifikation_template,
+                    imap_connection=imap_conn,
+                    sent_ordner=sent_ordner,
                 )
                 now = datetime.now().isoformat(timespec="seconds")
                 war_bestaetigt = row["status"] in ("bestaetigt", "re_verifikation_ausstehend")
@@ -877,6 +903,8 @@ def email_pruefung_senden():
             except Exception as e:
                 logger.exception("Verifikationsmail an %s fehlgeschlagen", row["email"])
                 flash(f"Fehler beim Senden an {row['email']}: {e}", "error")
+            finally:
+                close_sent_connection(imap_conn)
 
     if gesendet > 0:
         flash(f"{gesendet} Verifikationsmail(s) versendet.", "success")
@@ -979,6 +1007,8 @@ def settings_save():
         "verifikation_betreff", "verifikation_template",
         "imap_verifikation_ordner",
         "imap_nachweis_ordner",
+        "imap_sent_ordner",
+        "imap_retention_tage",
     ]
     data = {k: request.form.get(k, "") for k in keys}
 
@@ -1029,6 +1059,11 @@ def settings_save():
     imap_nachweis = data.get("imap_nachweis_ordner", "")
     if imap_nachweis and re.search(r'[\r\n"\\]', imap_nachweis):
         flash("Ungültiger IMAP-Nachweis-Ordnername: keine Zeilenumbrüche oder Anführungszeichen erlaubt.", "error")
+        return redirect(url_for("settings_page"))
+
+    imap_sent = data.get("imap_sent_ordner", "")
+    if imap_sent and re.search(r'[\r\n"\\]', imap_sent):
+        flash("Ungültiger IMAP-Sent-Ordnername: keine Zeilenumbrüche oder Anführungszeichen erlaubt.", "error")
         return redirect(url_for("settings_page"))
 
     save_settings(data)
@@ -1283,6 +1318,8 @@ def faelligkeiten_senden():
             flash("Keine Personen mit dem gewählten Prüfungstyp unter den Ausgewählten.", "error")
             return redirect(url_for("faelligkeiten"))
 
+    sent_ordner = _sent_ordner(cfg)
+    imap_conn = _open_sent_connection(cfg)
     try:
         emails_gesendet = send_notifications(
             ausgewaehlte,
@@ -1291,6 +1328,8 @@ def faelligkeiten_senden():
             kommandanten_cc=kommandanten_cc,
             email_betreff=email_betreff,
             email_template=email_template,
+            imap_connection=imap_conn,
+            sent_ordner=sent_ordner,
         )
         send_summary(
             ausgewaehlte,
@@ -1299,6 +1338,8 @@ def faelligkeiten_senden():
             zusammenfassung_an=zusammenfassung_an,
             zusammenfassung_betreff=zusammenfassung_betreff,
             zusammenfassung_template=zusammenfassung_template,
+            imap_connection=imap_conn,
+            sent_ordner=sent_ordner,
         )
 
         gesendet_am = datetime.now().isoformat(timespec="seconds")
@@ -1323,6 +1364,8 @@ def faelligkeiten_senden():
         logger.exception("Fehler beim Versenden")
         flash(f"Fehler beim Versenden: {e}", "error")
         return redirect(url_for("faelligkeiten"))
+    finally:
+        close_sent_connection(imap_conn)
 
     flash(f"{emails_gesendet} E-Mail(s) versendet.", "success")
     return redirect(url_for("faelligkeiten"))

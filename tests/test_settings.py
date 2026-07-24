@@ -480,3 +480,78 @@ def test_settings_gueltiges_verifikation_template_wird_gespeichert(client):
         "imap_verifikation_ordner": "",
     }, follow_redirects=True)
     assert b"gespeichert" in response.data
+
+
+# --- IMAP-Sent-Ordner / Retention (Issue #45) ---
+
+def test_settings_zeigt_imap_sent_ordner_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="imap_sent_ordner"' in html
+
+
+def test_settings_imap_sent_ordner_standardwert(client):
+    html = client.get("/settings").data.decode()
+    assert "INBOX.Sent" in html
+
+
+def test_settings_zeigt_imap_retention_tage_feld(client):
+    html = client.get("/settings").data.decode()
+    assert 'name="imap_retention_tage"' in html
+
+
+def test_settings_imap_retention_tage_standardwert(client):
+    html = client.get("/settings").data.decode()
+    assert 'value="90"' in html
+
+
+def test_settings_speichert_imap_sent_ordner_und_retention_tage(client, tmp_path):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "", "verifikation_template": "",
+        "imap_verifikation_ordner": "", "imap_nachweis_ordner": "",
+        "imap_sent_ordner": "INBOX.Gesendet",
+        "imap_retention_tage": "30",
+    })
+    db = sqlite3.connect(tmp_path / "checker.db")
+    db.row_factory = sqlite3.Row
+    rows = {r["key"]: r["value"] for r in db.execute("SELECT key, value FROM settings").fetchall()}
+    db.close()
+    assert rows["imap_sent_ordner"] == "INBOX.Gesendet"
+    assert rows["imap_retention_tage"] == "30"
+
+
+def test_settings_imap_sent_ordner_felder_nach_reload(client):
+    client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "", "verifikation_template": "",
+        "imap_verifikation_ordner": "", "imap_nachweis_ordner": "",
+        "imap_sent_ordner": "INBOX.Gesendet",
+        "imap_retention_tage": "30",
+    })
+    html = client.get("/settings").data.decode()
+    assert "INBOX.Gesendet" in html
+    assert 'value="30"' in html
+
+
+def test_settings_ungueltiger_imap_sent_ordner_abgelehnt(client):
+    response = client.post("/settings", data={
+        "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "",
+        "smtp_from": "", "kommandanten_cc": "", "zusammenfassung_an": "",
+        "warn_days": "90", "pruefungstypen": "G25", "archiv_tage": "365",
+        "email_betreff": "", "email_template": "",
+        "zusammenfassung_betreff": "", "zusammenfassung_template": "",
+        "verifikation_betreff": "", "verifikation_template": "",
+        "imap_verifikation_ordner": "", "imap_nachweis_ordner": "",
+        "imap_sent_ordner": 'INBOX."Sent"',
+        "imap_retention_tage": "90",
+    }, follow_redirects=True)
+    html = response.data.decode()
+    assert "Ungültiger" in html

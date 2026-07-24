@@ -1,4 +1,5 @@
 import email.utils
+import logging
 import os
 import smtplib
 from datetime import date
@@ -8,6 +9,10 @@ from pathlib import Path
 from typing import List, Optional
 
 from u_checker.checker import Person
+
+logger = logging.getLogger(__name__)
+
+IMAP_SENT_ORDNER_DEFAULT = "INBOX.Sent"
 
 SMTP_HOST = os.getenv("SMTP_HOST", "localhost")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -74,7 +79,24 @@ def _smtp_connect_and_send(smtp_config: dict, from_addr: str, to_addrs: list, mi
         server.sendmail(from_addr, to_addrs, mime.as_string())
 
 
-def _send(msg: dict, smtp_config: dict):
+def _append_to_sent(imap_connection, mime: MIMEMultipart, sent_ordner: Optional[str] = None) -> None:
+    """Legt eine Kopie der versendeten Mail im Sent-Ordner ab (best-effort, nie kritisch für den Versand)."""
+    if imap_connection is None:
+        return
+    ordner = sent_ordner or IMAP_SENT_ORDNER_DEFAULT
+    try:
+        imap_connection.append(ordner, "\\Seen", None, mime.as_bytes())
+    except Exception:
+        logger.warning("IMAP-APPEND in Sent-Ordner %r fehlgeschlagen", ordner, exc_info=True)
+
+
+def _send(
+    msg: dict,
+    smtp_config: dict,
+    *,
+    imap_connection=None,
+    sent_ordner: Optional[str] = None,
+) -> None:
     from_addr = smtp_config.get("from_addr") or SMTP_FROM
     to = msg["to"]
     to_list = to if isinstance(to, list) else [to]
@@ -89,6 +111,7 @@ def _send(msg: dict, smtp_config: dict):
     mime.attach(MIMEText(msg["body"], "plain", "utf-8"))
 
     _smtp_connect_and_send(smtp_config, from_addr, to_list + cc, mime)
+    _append_to_sent(imap_connection, mime, sent_ordner)
 
 
 def _build_zusammenfassung(
@@ -156,6 +179,8 @@ def send_verifikationsmail(
     *,
     betreff: Optional[str] = None,
     template: Optional[str] = None,
+    imap_connection=None,
+    sent_ordner: Optional[str] = None,
 ) -> str:
     """Sendet eine Verifikationsmail und gibt die Message-ID zurück."""
     effective_betreff = betreff or DEFAULT_VERIFIKATIONS_BETREFF
@@ -172,6 +197,7 @@ def send_verifikationsmail(
     mime.attach(MIMEText(body, "plain", "utf-8"))
 
     _smtp_connect_and_send(smtp_config, from_addr, [to_addr], mime)
+    _append_to_sent(imap_connection, mime, sent_ordner)
 
     return msg_id
 
@@ -183,6 +209,8 @@ def send_task_antwort(
     text: str,
     *,
     in_reply_to: Optional[str] = None,
+    imap_connection=None,
+    sent_ordner: Optional[str] = None,
 ) -> str:
     """Sendet eine Antwort auf einen Task und gibt die neue Message-ID zurück.
 
@@ -203,6 +231,7 @@ def send_task_antwort(
     mime.attach(MIMEText(text, "plain", "utf-8"))
 
     _smtp_connect_and_send(smtp_config, from_addr, [to_addr], mime)
+    _append_to_sent(imap_connection, mime, sent_ordner)
 
     return msg_id
 
@@ -221,6 +250,8 @@ def send_summary(
     zusammenfassung_an: Optional[List[str]] = None,
     zusammenfassung_betreff: Optional[str] = None,
     zusammenfassung_template: Optional[str] = None,
+    imap_connection=None,
+    sent_ordner: Optional[str] = None,
 ):
     effective_zusammenfassung_an = zusammenfassung_an if zusammenfassung_an is not None else ZUSAMMENFASSUNG_AN
     if not effective_zusammenfassung_an:
@@ -241,7 +272,7 @@ def send_summary(
         print("-" * 60)
         print(msg["body"])
     else:
-        _send(msg, effective_smtp)
+        _send(msg, effective_smtp, imap_connection=imap_connection, sent_ordner=sent_ordner)
         print(f"Zusammenfassung gesendet an {', '.join(msg['to'])}")
 
 
@@ -253,6 +284,8 @@ def send_notifications(
     kommandanten_cc: Optional[List[str]] = None,
     email_betreff: Optional[str] = None,
     email_template: Optional[str] = None,
+    imap_connection=None,
+    sent_ordner: Optional[str] = None,
 ) -> int:
     if not persons:
         print("Keine Personen mit Handlungsbedarf gefunden.")
@@ -275,7 +308,7 @@ def send_notifications(
             print("-" * 60)
             print(msg["body"])
         else:
-            _send(msg, effective_smtp)
+            _send(msg, effective_smtp, imap_connection=imap_connection, sent_ordner=sent_ordner)
             cc_info = f" (CC: {', '.join(msg['cc'])})" if msg["cc"] else ""
             print(f"Gesendet an {msg['to']}{cc_info}")
 

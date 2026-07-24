@@ -1359,3 +1359,174 @@ def test_verifikation_match_hat_vorrang_vor_task_reply_match(db_app):
     db.close()
     assert row["status"] == "bestaetigt"
     assert nachrichten_count == 0
+
+
+# --- open_sent_connection / close_sent_connection ---
+
+def test_open_sent_connection_stellt_ordner_sicher(db_app):
+    """open_sent_connection legt den Sent-Ordner an, falls er noch nicht existiert."""
+    from web.imap_poller import open_sent_connection
+
+    mock_imap = MagicMock()
+    mock_imap.list.return_value = ("OK", [b""])  # Ordner existiert nicht
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        result = open_sent_connection(cfg, "INBOX.Sent")
+
+    assert result is mock_imap
+    mock_imap.create.assert_called_once_with("INBOX.Sent")
+
+
+def test_open_sent_connection_kein_imap_konfiguriert(db_app):
+    """open_sent_connection gibt None zurück, wenn IMAP nicht konfiguriert ist."""
+    from web.imap_poller import open_sent_connection
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL") as mock_ssl:
+        result = open_sent_connection({}, "INBOX.Sent")
+        assert result is None
+        mock_ssl.assert_not_called()
+
+
+def test_open_sent_connection_fehler_gibt_none_zurueck(db_app):
+    """Schlägt der IMAP-Connect fehl, gibt open_sent_connection best-effort None zurück."""
+    from web.imap_poller import open_sent_connection
+
+    cfg = {
+        "imap_host": "imap.example.com",
+        "imap_port": "993",
+        "imap_user": "test@example.com",
+        "imap_password": "pass",
+    }
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", side_effect=Exception("connection refused")):
+        result = open_sent_connection(cfg, "INBOX.Sent")
+
+    assert result is None
+
+
+def test_close_sent_connection_ruft_logout_auf(db_app):
+    from web.imap_poller import close_sent_connection
+
+    mock_imap = MagicMock()
+    close_sent_connection(mock_imap)
+    mock_imap.logout.assert_called_once()
+
+
+def test_close_sent_connection_none_ist_noop(db_app):
+    from web.imap_poller import close_sent_connection
+
+    close_sent_connection(None)  # darf nicht werfen
+
+
+# --- imap_retention_cleanup ---
+
+_RETENTION_CFG = {
+    "imap_host": "imap.example.com",
+    "imap_port": "993",
+    "imap_user": "test@example.com",
+    "imap_password": "pass",
+}
+
+
+def test_imap_retention_cleanup_loescht_alte_mails_in_allen_ordnern(db_app):
+    """Mails älter als die Frist werden in jedem übergebenen Ordner gesucht, als Deleted markiert und expunged."""
+    from web.imap_poller import imap_retention_cleanup
+
+    mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
+    mock_imap.search.return_value = ("OK", [b"1 2"])
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        deleted = imap_retention_cleanup(
+            _RETENTION_CFG, ["INBOX.Sent", "Nachweise", "u-checker-verifikation"], 90,
+        )
+
+    assert deleted == 6  # 2 UIDs pro Ordner * 3 Ordner
+    assert mock_imap.select.call_args_list == [
+        (("INBOX.Sent",),), (("Nachweise",),), (("u-checker-verifikation",),),
+    ]
+    for call in mock_imap.search.call_args_list:
+        assert call.args[0] is None
+        assert call.args[1] == "BEFORE"
+    assert mock_imap.uid.call_count == 3  # ein gebatchter STORE-Aufruf pro Ordner
+    for call in mock_imap.uid.call_args_list:
+        assert call.args == ("STORE", b"1,2", "+FLAGS", "\\Deleted")
+    assert mock_imap.expunge.call_count == 3
+
+
+def test_imap_retention_cleanup_durchsucht_nie_inbox_spam_trash(db_app):
+    """Der Retention-Job selektiert ausschließlich die übergebenen App-eigenen Ordner."""
+    from web.imap_poller import imap_retention_cleanup
+
+    mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
+    mock_imap.search.return_value = ("OK", [b""])
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_retention_cleanup(_RETENTION_CFG, ["INBOX.Sent", "Nachweise", "u-checker-verifikation"], 90)
+
+    selected = [call.args[0] for call in mock_imap.select.call_args_list]
+    assert "INBOX" not in selected
+    assert "Spam" not in selected
+    assert "Trash" not in selected
+
+
+def test_imap_retention_cleanup_keine_treffer_kein_expunge(db_app):
+    """Findet SEARCH keine alten Mails in einem Ordner, wird dort weder STORE noch expunge aufgerufen."""
+    from web.imap_poller import imap_retention_cleanup
+
+    mock_imap = MagicMock()
+    mock_imap.select.return_value = ("OK", [b""])
+    mock_imap.search.return_value = ("OK", [b""])
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        deleted = imap_retention_cleanup(_RETENTION_CFG, ["INBOX.Sent"], 90)
+
+    assert deleted == 0
+    mock_imap.uid.assert_not_called()
+    mock_imap.expunge.assert_not_called()
+
+
+def test_imap_retention_cleanup_kein_imap_konfiguriert(db_app):
+    """imap_retention_cleanup tut nichts, wenn IMAP nicht konfiguriert ist."""
+    from web.imap_poller import imap_retention_cleanup
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL") as mock_ssl:
+        deleted = imap_retention_cleanup({}, ["INBOX.Sent"], 90)
+        assert deleted == 0
+        mock_ssl.assert_not_called()
+
+
+def test_imap_retention_cleanup_ordner_fehler_wird_geloggt_und_weitergemacht(db_app):
+    """Schlägt SELECT für einen Ordner fehl, wird das geloggt, die anderen Ordner werden trotzdem geprüft."""
+    from web.imap_poller import imap_retention_cleanup
+
+    mock_imap = MagicMock()
+    mock_imap.select.side_effect = [("NO", [b""]), ("OK", [b""])]
+    mock_imap.search.return_value = ("OK", [b"5"])
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        deleted = imap_retention_cleanup(_RETENTION_CFG, ["kaputter-ordner", "Nachweise"], 90)
+
+    assert deleted == 1
+    mock_imap.expunge.assert_called_once()
+
+
+def test_imap_retention_cleanup_logout_wird_immer_aufgerufen(db_app):
+    """Die Connection wird auch bei Fehlern innerhalb der Ordner-Schleife wieder geschlossen."""
+    from web.imap_poller import imap_retention_cleanup
+
+    mock_imap = MagicMock()
+    mock_imap.select.side_effect = Exception("boom")
+
+    with patch("web.imap_poller.imaplib.IMAP4_SSL", return_value=mock_imap):
+        imap_retention_cleanup(_RETENTION_CFG, ["INBOX.Sent"], 90)
+
+    mock_imap.logout.assert_called_once()

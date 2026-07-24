@@ -114,6 +114,11 @@
     <input type="number" id="archiv_tage" name="archiv_tage" value="{{ cfg.archiv_tage }}" min="1" placeholder="365">
     <p class="hint">Wie lange werden abgeschlossene Aufgaben aufbewahrt?</p>
   </div>
+  <div class="field">
+    <label for="imap_retention_tage">Aufbewahrungsfrist IMAP-Ordner (Tage)</label>
+    <input type="number" id="imap_retention_tage" name="imap_retention_tage" value="{{ cfg.imap_retention_tage }}" min="1" placeholder="90">
+    <p class="hint">Wie lange bleiben Mails in Sent, Nachweise und u-checker-verifikation erhalten, bevor sie automatisch gelöscht werden? INBOX, Spam und Papierkorb sind davon nicht betroffen.</p>
+  </div>
 
   <h2>E-Mail an Mitglieder</h2>
   <div class="field">
@@ -156,6 +161,11 @@
     <label for="imap_nachweis_ordner">IMAP-Ordner für abgeschlossene Nachweise</label>
     <input type="text" id="imap_nachweis_ordner" name="imap_nachweis_ordner" value="{{ cfg.imap_nachweis_ordner }}" placeholder="Nachweise">
     <p class="hint">In diesen IMAP-Ordner werden erledigte Nachweis-Emails verschoben.</p>
+  </div>
+  <div class="field" style="max-width:350px;">
+    <label for="imap_sent_ordner">IMAP-Sent-Ordner</label>
+    <input type="text" id="imap_sent_ordner" name="imap_sent_ordner" value="{{ cfg.imap_sent_ordner }}" placeholder="INBOX.Sent">
+    <p class="hint">Kopien versendeter Mails (Erinnerungen, Zusammenfassungen, Verifikationsmails, Task-Antworten) werden hier abgelegt. Bei Dovecot-Servern meist mit <code>INBOX.</code>-Präfix.</p>
   </div>
 
   <button type="submit">Einstellungen speichern</button>

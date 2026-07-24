@@ -9,7 +9,7 @@ import logging
 import re
 import smtplib
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 
 from web.extractor import (
@@ -120,6 +120,81 @@ def imap_delete_from_inbox(cfg: dict, imap_uid: str) -> None:
             imap.logout()
         except Exception:
             pass
+
+
+def open_sent_connection(cfg: dict, sent_ordner: str):
+    """Baut eine IMAP-Verbindung für Sent-APPENDs auf und stellt den Ordner sicher (best-effort).
+
+    Gibt None zurück, wenn IMAP nicht konfiguriert ist oder der Verbindungsaufbau fehlschlägt,
+    damit ein IMAP-Ausfall nie den SMTP-Versand verhindert.
+    """
+    try:
+        imap = _imap_connect(cfg)
+    except Exception:
+        logger.warning("IMAP-Verbindung für Sent-Ordner konnte nicht aufgebaut werden", exc_info=True)
+        return None
+    if imap is None:
+        return None
+    try:
+        _ensure_imap_ordner(imap, sent_ordner)
+    except Exception:
+        logger.warning("Sent-Ordner %r konnte nicht sichergestellt werden", sent_ordner, exc_info=True)
+        try:
+            imap.logout()
+        except Exception:
+            pass
+        return None
+    return imap
+
+
+def close_sent_connection(imap) -> None:
+    """Schließt eine per open_sent_connection geöffnete Verbindung (best-effort)."""
+    if imap is None:
+        return
+    try:
+        imap.logout()
+    except Exception:
+        pass
+
+
+def _retention_cleanup_ordner(imap, ordner: str, grenze: str) -> int:
+    """Löscht in einem Ordner Mails vor `grenze` (IMAP-Datumsformat, z.B. '01-Jan-2025'). Best-effort pro Ordner."""
+    status, _ = imap.select(ordner)
+    if status != "OK":
+        logger.warning("IMAP-Ordner %r für Retention nicht gefunden", ordner)
+        return 0
+    _, data = imap.search(None, "BEFORE", grenze)
+    uids = data[0].split() if data and data[0] else []
+    if not uids:
+        return 0
+    imap.uid("STORE", b",".join(uids), "+FLAGS", "\\Deleted")
+    imap.expunge()
+    return len(uids)
+
+
+def imap_retention_cleanup(cfg: dict, ordner_liste: list[str], retention_tage: int) -> int:
+    """Löscht in den übergebenen App-eigenen IMAP-Ordnern Mails älter als retention_tage (best-effort).
+
+    INBOX, Spam und Trash sind nie Teil von ordner_liste (Aufrufer-Verantwortung), damit sie
+    von der automatischen Löschung ausgenommen bleiben.
+    """
+    imap = _imap_connect(cfg)
+    if imap is None:
+        return 0
+    grenze = (datetime.now() - timedelta(days=retention_tage)).strftime("%d-%b-%Y")
+    deleted = 0
+    try:
+        for ordner in ordner_liste:
+            try:
+                deleted += _retention_cleanup_ordner(imap, ordner, grenze)
+            except Exception:
+                logger.exception("IMAP-Retention für Ordner %r fehlgeschlagen", ordner)
+    finally:
+        try:
+            imap.logout()
+        except Exception:
+            pass
+    return deleted
 
 
 def process_email(
