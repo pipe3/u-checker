@@ -10,11 +10,7 @@ u-checker ist aus einem CLI-Script gewachsen zu einer vollständigen Nachweis-Ve
 
 **Für Domänenbegriffe (Prüfung, Verifikation, Nachweis, Task, ...) und Architekturentscheidungen ist `CONTEXT.md` + `docs/adr/` die maßgebliche Quelle** – nicht dieser Abschnitt. Diese Datei hier hält nur Meta-Anleitung für Agenten fest, keine sich schnell ändernden Produktdetails.
 
-Web-App-Code liegt unter `web/` (`app.py`, `imap_poller.py`, `scheduler.py`, `pdf_export.py`). Das ursprüngliche CLI-Script (`main.py`) besteht als Ausgangspunkt fort:
-```bash
-python main.py export.xls --dry-run   # Ausgabe im Terminal, kein Versand
-python main.py export.xls             # echte Emails versenden
-```
+Web-App-Code liegt unter `web/` (`app.py`, `imap_poller.py`, `scheduler.py`, `pdf_export.py`) und ist der einzige Einstiegspunkt (siehe ADR 0013 – der ursprüngliche CLI-Einstiegspunkt wurde entfernt).
 
 ---
 
