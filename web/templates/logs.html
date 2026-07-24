@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Logs – Untersuchungs-Checker{% endblock %}
+
+{% block extra_css %}
+<style>
+  .log-toolbar { margin-bottom: 1rem; }
+  .log-ausgabe {
+    background: #212529; color: #e9ecef; font-family: monospace; font-size: 0.8rem;
+    padding: 1rem; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+    line-height: 1.4;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<h1>Logs</h1>
+
+<div class="log-toolbar">
+  <a href="{{ url_for('logs_page') }}"><button type="button">Aktualisieren</button></a>
+</div>
+
+{% if lines %}
+<div class="log-ausgabe">{% for line in lines %}{{ line }}
+{% endfor %}</div>
+{% else %}
+<p class="empty">Noch keine Log-Einträge vorhanden.</p>
+{% endif %}
+{% endblock %}

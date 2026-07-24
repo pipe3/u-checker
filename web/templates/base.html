@@ -43,6 +43,8 @@
              class="{% if request.endpoint in ('email_pruefung', 'email_pruefung_senden') %}aktiv{% endif %}">E-Mail-Prüfung</a></li>
       <li><a href="{{ url_for('settings_page') }}"
              class="{% if request.endpoint in ('settings_page', 'settings_save', 'settings_imap_poll', 'settings_smtp_test') %}aktiv{% endif %}">Einstellungen</a></li>
+      <li><a href="{{ url_for('logs_page') }}"
+             class="{% if request.endpoint == 'logs_page' %}aktiv{% endif %}">Logs</a></li>
     </ul>
   </nav>
 

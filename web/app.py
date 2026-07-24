@@ -4,8 +4,9 @@ import re
 import sqlite3
 from contextlib import closing
 from datetime import date, datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 from dotenv import load_dotenv
@@ -34,6 +35,35 @@ app.config.from_mapping(
     SECRET_KEY=os.getenv("SECRET_KEY", "dev-secret-change-in-production"),
     DATA_DIR=Path(os.getenv("DATA_DIR", "/data")),
 )
+
+
+def _setup_log_file_handler():
+    """Registriert einen RotatingFileHandler zusätzlich zum bestehenden stderr-Output (siehe ADR 0014)."""
+    data_dir = Path(app.config["DATA_DIR"])
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(data_dir / "app.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    except OSError:
+        logger.warning("Konnte Log-Datei in %s nicht anlegen, überspringe RotatingFileHandler", data_dir)
+        return
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(logging.INFO)
+
+
+_setup_log_file_handler()
+
+
+def read_log_tail(path: Path, n: int = 200) -> List[str]:
+    """Liest die letzten n Zeilen einer Textdatei. Gibt eine leere Liste zurück, wenn die Datei fehlt oder leer ist."""
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+    return [line.rstrip("\n") for line in lines[-n:]]
+
 
 @app.template_filter("datum_de")
 def datum_de(value: str) -> str:
@@ -987,6 +1017,12 @@ def upload_loeschen():
     if existed:
         flash("XLS-Datei gelöscht.", "success")
     return redirect(url_for("index"))
+
+
+@app.route("/logs", methods=["GET"])
+def logs_page():
+    lines = read_log_tail(_data_dir() / "app.log", 200)
+    return render_template("logs.html", lines=list(reversed(lines)))
 
 
 @app.route("/settings", methods=["GET"])
