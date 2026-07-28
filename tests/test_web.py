@@ -402,6 +402,82 @@ def test_nachweise_zuordnen_dropdown_auf_unklare_karten(client, tmp_path):
     assert f"/tasks/{task_id}/zuordnen" in body
 
 
+def test_nachweise_zuordnen_dropdown_auf_neu_karten(client, tmp_path):
+    """Umordnen-Dropdown erscheint auch auf NEU-Karten wenn XLS vorhanden (Issue #53)."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU", mitglied_name="Max Mustermann")
+
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.app.load_members_from_xls", return_value=[
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Mustermann"}
+    ]):
+        response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/zuordnen" in body
+    # Neutraler Platzhalter, keine Vorauswahl des aktuellen Mitglieds
+    assert "Anderes Mitglied wählen" in body
+
+
+def test_nachweise_neu_karte_behaelt_erledigt_button_neben_dropdown(client, tmp_path):
+    """NEU-Karte behält den Erledigt-Button, wenn zusätzlich der Umordnen-Dropdown erscheint."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.app.load_members_from_xls", return_value=[
+        {"pers_nr": "001", "vorname": "Max", "nachname": "Mustermann"}
+    ]):
+        response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/erledigt" in body
+    assert f"/tasks/{task_id}/zuordnen" in body
+
+
+def test_nachweise_neu_karte_ohne_xls_zeigt_nur_erledigt(client, tmp_path):
+    """Ohne geladenes XLS bleibt die NEU-Karte beim reinen Erledigt-Button (kein leerer Dropdown)."""
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(db_path, status="NEU")
+
+    response = client.get("/nachweise")
+    body = response.data.decode()
+    assert f"/tasks/{task_id}/erledigt" in body
+    assert f"/tasks/{task_id}/zuordnen" not in body
+
+
+def test_zuordnen_auf_neu_task_ueberschreibt_mitglied(client, tmp_path):
+    """POST /zuordnen auf einen NEU-Task überschreibt die zugeordnete Person (Issue #53)."""
+    import sqlite3
+    client.get("/")
+    db_path = tmp_path / "checker.db"
+    task_id = _db_insert_task(
+        db_path,
+        status="NEU",
+        mitglied_nr="001",
+        mitglied_name="Max Mustermann",
+        pruefungstyp="G25",
+    )
+
+    (tmp_path / "latest.xls").write_bytes(b"dummy")
+    with patch("web.extractor.load_members_from_xls", return_value=[
+        {"pers_nr": "002", "vorname": "Erika", "nachname": "Musterfrau"}
+    ]):
+        response = client.post(f"/tasks/{task_id}/zuordnen", data={"pers_nr": "002"}, follow_redirects=True)
+    assert response.status_code == 200
+
+    db = sqlite3.connect(db_path)
+    db.row_factory = sqlite3.Row
+    row = db.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    db.close()
+    assert row["status"] == "NEU"
+    assert row["mitglied_nr"] == "002"
+    assert row["mitglied_name"] == "Erika Musterfrau"
+    # Prüfungstyp bleibt beim Umordnen unangetastet
+    assert row["pruefungstyp"] == "G25"
+
+
 def test_nachweise_unklare_zuordnung_fallback_erledigt_ohne_xls(client, tmp_path):
     """UNKLARE_ZUORDNUNG-Karte zeigt Erledigt-Fallback wenn kein XLS geladen ist."""
     client.get("/")
