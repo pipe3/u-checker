@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -110,8 +111,14 @@ def _xls_upload_zeit_path() -> Path:
 
 
 def get_db():
-    db = sqlite3.connect(_db_path())
+    # timeout: Bei gesperrter DB bis zu 30s warten statt sofort mit
+    # "database is locked" zu scheitern (z.B. während ein IMAP-Poll schreibt).
+    db = sqlite3.connect(_db_path(), timeout=30)
     db.row_factory = sqlite3.Row
+    # WAL: Leser (z.B. die Index-Seite) blockieren Schreiber nicht mehr und
+    # umgekehrt. busy_timeout deckt zusätzlich Schreiber-gegen-Schreiber ab.
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA busy_timeout=30000")
     return db
 
 
@@ -1075,6 +1082,12 @@ def settings_save():
     return redirect(url_for("settings_page"))
 
 
+# Erlaubt jeweils nur einen manuellen Poll gleichzeitig. Verhindert, dass
+# mehrfaches Klicken auf "Posteingang abrufen" parallele, langlaufende
+# IMAP-Läufe stapelt, die sich gegenseitig und die DB blockieren.
+_imap_poll_lock = threading.Lock()
+
+
 def _do_imap_poll() -> None:
     """Führt einen manuellen IMAP-Poll aus und setzt die Flash-Message. Gemeinsame Logik für
     /imap-poll und /settings/imap-poll, die sich nur im abschließenden Redirect unterscheiden."""
@@ -1082,6 +1095,9 @@ def _do_imap_poll() -> None:
     cfg = get_settings()
     if not cfg.get("imap_host", "").strip():
         flash("Bitte zuerst IMAP-Host in den Einstellungen eintragen.", "error")
+        return
+    if not _imap_poll_lock.acquire(blocking=False):
+        flash("Es läuft bereits ein Abruf – bitte einen Moment warten.", "error")
         return
     try:
         new_count = poll_inbox(app)
@@ -1091,6 +1107,8 @@ def _do_imap_poll() -> None:
             flash("Keine neuen Nachrichten im Posteingang.", "success")
     except Exception as e:
         flash(f"IMAP-Fehler – {type(e).__name__}: {e}", "error")
+    finally:
+        _imap_poll_lock.release()
 
 
 @app.route("/imap-poll", methods=["POST"])

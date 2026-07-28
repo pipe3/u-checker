@@ -124,7 +124,8 @@
     {% endif %}
     {% endif %}
     <a class="kachel-link" href="{{ url_for('nachweise') }}">Nachweise öffnen →</a>
-    <form method="post" action="{{ url_for('imap_poll') }}" style="margin-top:0.5rem;">
+    <form method="post" action="{{ url_for('imap_poll') }}" style="margin-top:0.5rem;"
+          onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Wird abgerufen…';">
       <button type="submit" class="btn-sekundaer">Posteingang abrufen</button>
     </form>
   </div>

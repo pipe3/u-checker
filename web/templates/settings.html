@@ -181,7 +181,8 @@
 <hr>
 <p class="abschnitt-titel">Posteingang jetzt abrufen</p>
 <p class="abschnitt-hint">Ruft den IMAP-Posteingang sofort ab, ohne auf den nächsten automatischen Abruf zu warten.</p>
-<form method="post" action="/settings/imap-poll">
+<form method="post" action="/settings/imap-poll"
+      onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='Wird abgerufen…';">
   <button type="submit" class="btn-sekundaer">Posteingang abrufen</button>
 </form>
 {% endblock %}
