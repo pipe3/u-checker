@@ -429,7 +429,9 @@ def nachweise():
     verfuegbare_typen = [r["pruefungstyp"] for r in typen_rows]
 
     members = []
-    if _xls_path().exists() and any(t["status"] in ("UNKLARE_ZUORDNUNG", "ABWEICHENDE_ZUORDNUNG") for t in tasks):
+    if _xls_path().exists() and any(
+        t["status"] in ("NEU", "UNKLARE_ZUORDNUNG", "ABWEICHENDE_ZUORDNUNG") for t in tasks
+    ):
         members = load_members_from_xls(str(_xls_path()))
 
     return render_template(
